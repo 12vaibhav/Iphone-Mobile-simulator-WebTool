@@ -380,12 +380,12 @@
           ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }
           ::-webkit-scrollbar-track { background: transparent !important; }
           ::-webkit-scrollbar-thumb { background: transparent !important; }
-          html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }
+          html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; overscroll-behavior: none !important; overscroll-behavior-y: none !important; }
         `;
         if (iframeDoc.head) iframeDoc.head.appendChild(style);
       } catch (styleErr) {}
 
-      // Intercept in-page anchor clicks (scroll-down buttons) to prevent iframe navigation/reloads
+      // Intercept in-page anchor clicks (scroll-down buttons) to scroll ONLY the iframe window without shifting device
       iframeDoc.addEventListener('click', (e) => {
         const anchor = e.target.closest('a');
         if (!anchor) return;
@@ -393,17 +393,24 @@
         if (href && (href.startsWith('#') || href.startsWith('/#') || href === '')) {
           e.preventDefault();
           const hash = href.includes('#') ? href.substring(href.indexOf('#')) : '';
+          const docView = iframeDoc.defaultView || window;
           if (!hash || hash === '#' || hash === '#top') {
-            iframeDoc.defaultView.scrollTo({ top: 0, behavior: 'smooth' });
+            docView.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
             try {
               const targetEl = iframeDoc.querySelector(hash) || iframeDoc.getElementById(hash.substring(1));
               if (targetEl) {
-                targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                const currentY = docView.pageYOffset || iframeDoc.documentElement.scrollTop || 0;
+                const targetY = targetEl.getBoundingClientRect().top + currentY;
+                docView.scrollTo({ top: targetY, behavior: 'smooth' });
               }
             } catch (err) {
               const idEl = iframeDoc.getElementById(hash.substring(1));
-              if (idEl) idEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              if (idEl) {
+                const currentY = docView.pageYOffset || iframeDoc.documentElement.scrollTop || 0;
+                const targetY = idEl.getBoundingClientRect().top + currentY;
+                docView.scrollTo({ top: targetY, behavior: 'smooth' });
+              }
             }
           }
         }
@@ -469,6 +476,22 @@
 
   scaleSelect.addEventListener('change', calculateAndApplyScale);
   window.addEventListener('resize', calculateAndApplyScale);
+
+  // Prevent any container scroll or accidental device shifting
+  function preventContainerScroll() {
+    if (canvasViewport.scrollTop !== 0) canvasViewport.scrollTop = 0;
+    if (canvasViewport.scrollLeft !== 0) canvasViewport.scrollLeft = 0;
+    if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+  }
+  canvasViewport.addEventListener('scroll', preventContainerScroll, { passive: true });
+  window.addEventListener('scroll', preventContainerScroll, { passive: true });
+
+  // Prevent wheel events from scrolling the canvas background
+  canvasViewport.addEventListener('wheel', (e) => {
+    if (e.target === canvasViewport || e.target === sceneBackground || e.target === deviceRigContainer) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   // Orientation Toggle
   orientationBtn.addEventListener('click', () => {

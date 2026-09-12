@@ -395,7 +395,7 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
   ::-webkit-scrollbar {{ display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }}
   ::-webkit-scrollbar-track {{ background: transparent !important; }}
   ::-webkit-scrollbar-thumb {{ background: transparent !important; }}
-  html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }}
+  html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; overscroll-behavior: none !important; overscroll-behavior-y: none !important; }}
 </style>
 <script id="simulator-font-proxy">
 /* Runtime font & asset proxy: intercepts JS-dynamically-inserted <link>/<style>,
@@ -544,11 +544,17 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
         try {{
           const targetEl = document.querySelector(hash) || document.getElementById(hash.substring(1));
           if (targetEl) {{
-            targetEl.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+            const currentY = window.pageYOffset || document.documentElement.scrollTop || 0;
+            const targetY = targetEl.getBoundingClientRect().top + currentY;
+            window.scrollTo({{ top: targetY, behavior: 'smooth' }});
           }}
         }} catch (err) {{
           const idEl = document.getElementById(hash.substring(1));
-          if (idEl) idEl.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+          if (idEl) {{
+            const currentY = window.pageYOffset || document.documentElement.scrollTop || 0;
+            const targetY = idEl.getBoundingClientRect().top + currentY;
+            window.scrollTo({{ top: targetY, behavior: 'smooth' }});
+          }}
         }}
       }}
     }}
