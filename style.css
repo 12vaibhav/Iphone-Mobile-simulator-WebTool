@@ -1,0 +1,1071 @@
+/* =========================================================
+   Wedding Mobile Studio - iPhone Simulator & Screen Recorder
+   ========================================================= */
+
+:root {
+  --bg-primary: #0a0c10;
+  --bg-surface: #12151d;
+  --bg-surface-elevated: #1a1e2a;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(229, 169, 60, 0.4);
+  --text-main: #f0f2f7;
+  --text-muted: #8b92a5;
+  --accent-gold: #e5a93c;
+  --accent-rose: #d67d73;
+  --accent-record: #ef4444;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+}
+
+/* =========================================================
+   Top Header & URL Bar
+   ========================================================= */
+.top-header {
+  height: 56px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  gap: 16px;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  min-width: 230px;
+}
+
+.brand-icon {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, rgba(229, 169, 60, 0.2) 0%, rgba(214, 125, 115, 0.2) 100%);
+  border: 1px solid rgba(229, 169, 60, 0.3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-gold);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: #ffffff;
+}
+
+.brand-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* URL Address Bar */
+.url-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 720px;
+}
+
+.url-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 30px;
+  padding: 2px 4px 2px 14px;
+  transition: var(--transition);
+}
+
+.url-input-wrap:focus-within {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 3px rgba(229, 169, 60, 0.15);
+}
+
+.url-icon {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+}
+
+#urlInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-main);
+  padding: 6px 0;
+}
+
+#urlInput::placeholder {
+  color: #555d72;
+}
+
+.url-action-btn {
+  background: var(--accent-gold);
+  color: #12151d;
+  border: none;
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: var(--transition);
+}
+
+.url-action-btn:hover {
+  background: #f0b54d;
+  transform: translateY(-1px);
+}
+
+/* Refresh & Quick Sample Buttons */
+.icon-tool-btn, .secondary-btn {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+
+.icon-tool-btn:hover, .secondary-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.icon-tool-btn:active, .secondary-btn:active {
+  transform: scale(0.97);
+}
+
+/* Free Screen Recording Header Group */
+.header-record-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recording-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f87171;
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-badge.hidden {
+  display: none;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent-record);
+  border-radius: 50%;
+  animation: pulseRecording 1.4s infinite;
+}
+
+@keyframes pulseRecording {
+  0% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.record-btn {
+  background: #201316;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #ffffff;
+  border-radius: 22px;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: var(--transition);
+}
+
+.record-dot {
+  width: 10px;
+  height: 10px;
+  background-color: var(--accent-record);
+  border-radius: 50%;
+}
+
+.record-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+}
+
+.record-btn.recording {
+  background: var(--accent-record);
+  border-color: #dc2626;
+  color: #ffffff;
+}
+
+.record-btn.recording .record-dot {
+  background: #ffffff;
+  border-radius: 2px; /* Square stop icon */
+}
+
+/* =========================================================
+   Secondary Studio Toolbar
+   ========================================================= */
+.studio-toolbar {
+  height: 48px;
+  background: #11141c;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  z-index: 90;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.tool-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.tool-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* iPhone Finish Swatches */
+.finish-swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: var(--transition);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.swatch-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+}
+
+.swatch-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.swatch-circle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.finish-desert { background: linear-gradient(135deg, #b97753 0%, #874f33 100%); }
+.finish-gold { background: linear-gradient(135deg, #f2deb4 0%, #be9e63 100%); }
+.finish-blue { background: linear-gradient(135deg, #4f667d 0%, #2f3e4f 100%); }
+.finish-natural { background: linear-gradient(135deg, #d3d0c9 0%, #908d87 100%); }
+
+/* Scene & Utility Controls */
+.scene-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.custom-select-wrap select {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: var(--transition);
+}
+
+.custom-select-wrap select:hover, .custom-select-wrap select:focus {
+  border-color: var(--accent-gold);
+}
+
+.tool-btn {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition);
+}
+
+.tool-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tool-btn.active {
+  background: rgba(229, 169, 60, 0.15);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+}
+
+.tool-icon-only-btn {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.tool-icon-only-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+}
+
+/* =========================================================
+   Canvas Viewport & Background Scenes
+   ========================================================= */
+.canvas-viewport {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: calc(100% - 104px);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Scene Background Layer */
+.scene-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: filter 0.3s ease, background 0.4s ease;
+  z-index: 1;
+}
+
+.scene-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.1) 0%, rgba(0, 0, 0, 0.5) 100%);
+  pointer-events: none;
+}
+
+/* Background Presets */
+.preset-dark {
+  background: radial-gradient(circle at 50% 40%, #171b26 0%, #0a0c10 100%);
+}
+
+.preset-warm-bokeh {
+  background: radial-gradient(circle at 30% 20%, #42251d 0%, #1e1115 50%, #0d080c 100%),
+              radial-gradient(circle at 80% 80%, rgba(229, 169, 60, 0.25) 0%, transparent 60%);
+}
+
+.preset-floral-pastel {
+  background: linear-gradient(135deg, #2d1822 0%, #1a101b 50%, #0c0d12 100%);
+}
+
+.preset-luxury-marble {
+  background: radial-gradient(circle at 50% 30%, #1e2430 0%, #0d1017 70%, #07080b 100%);
+}
+
+.preset-sunset-glow {
+  background: linear-gradient(180deg, #3d1c28 0%, #201322 50%, #0a0b12 100%);
+}
+
+.preset-pure-white {
+  background: #e9ecf2;
+}
+.preset-pure-white + .scene-overlay {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.1) 0%, rgba(0, 0, 0, 0.15) 100%);
+}
+
+/* Blurred state */
+.scene-background.blurred {
+  filter: blur(20px) brightness(0.75);
+  transform: scale(1.05); /* Avoid white fringe on blur */
+}
+
+/* =========================================================
+   iPhone Device Frame Rig
+   ========================================================= */
+.device-rig-container {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Device Wrapper calibrated to 1179 x 2408 frame ratio */
+.device-wrapper {
+  position: relative;
+  /* Base size rendered at crisp high-DPI proportions */
+  width: 410px;
+  height: 837.28px; /* 410 * (2408 / 1179) */
+  flex-shrink: 0;
+  transform-origin: center center;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Landscape Mode */
+.device-wrapper.landscape {
+  transform: rotate(-90deg);
+}
+
+/* Screen Cutout (Tucked safely under titanium bezel to eliminate subpixel white edge lines) */
+.device-screen {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 2.35%;
+  width: 88.5%;
+  height: 95.2%;
+  border-radius: 46px;
+  overflow: hidden;
+  background: #000000;
+  z-index: 5;
+  box-shadow: inset 0 0 4px rgba(0,0,0,0.8);
+  /* Hide scrollbar completely */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* Native hardware SVG circular touch cursor (0ms latency, exact mouse speed) */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto;
+}
+
+.device-screen::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Simulator Iframe - 100% symmetrically centered with pitch-black base */
+#simulatorIframe {
+  width: 100%;
+  height: 100%;
+  border: 0 !important;
+  outline: none !important;
+  display: block;
+  background: #000000;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto;
+}
+
+#simulatorIframe::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Empty Screen State */
+.empty-screen-placeholder {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 40%, #171b26 0%, #0d0f15 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px;
+  z-index: 8;
+  color: var(--text-main);
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto;
+}
+
+.empty-screen-placeholder.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.empty-icon-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(229, 169, 60, 0.12);
+  border: 1px solid rgba(229, 169, 60, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-gold);
+  margin-bottom: 18px;
+}
+
+.empty-screen-placeholder h4 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #ffffff;
+}
+
+.empty-screen-placeholder p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-width: 240px;
+}
+
+.empty-screen-placeholder p strong {
+  color: var(--accent-gold);
+}
+
+/* The Authentic Frame Overlay (PNG with Transparent Cutout) */
+.iphone-frame-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+  object-fit: fill;
+  filter: drop-shadow(0 30px 60px rgba(0, 0, 0, 0.55));
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: opacity 0.2s ease;
+}
+
+/* =========================================================
+   Circular Touch / Tap Indicator Layer
+   ========================================================= */
+.touch-indicator-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important; /* Never block clicks/taps on website buttons */
+  z-index: 25;
+  overflow: hidden;
+}
+
+.circular-touch-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  /* Zero latency: absolutely NO transition on position/translate */
+  transition: opacity 0.12s ease;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circular-touch-cursor.visible {
+  opacity: 1;
+}
+
+.circular-touch-cursor.active {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.touch-inner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.touch-ripple {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.2);
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes rippleEffect {
+  0% {
+    width: 0px;
+    height: 0px;
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    width: 65px;
+    height: 65px;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.4);
+  }
+}
+
+.touch-ripple.animating {
+  animation: rippleEffect 0.4s ease-out forwards;
+}
+
+/* Hidden state when toggled off */
+.touch-indicator-layer.disabled {
+  display: none !important;
+}
+
+/* =========================================================
+   Recording Preview Modal
+   ========================================================= */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  padding: 20px;
+}
+
+.modal-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.record-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 580px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.95);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-backdrop.active .record-modal {
+  transform: scale(1);
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modal-icon {
+  width: 36px;
+  height: 36px;
+  background: rgba(229, 169, 60, 0.15);
+  border: 1px solid rgba(229, 169, 60, 0.3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-gold);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.modal-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+
+.modal-close-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.modal-video-container {
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 440px;
+  max-height: 70vh;
+  overflow: hidden;
+  padding: 12px;
+}
+
+#recordedVideoPlayer {
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 12px;
+  outline: none;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.badge-tag {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-gold);
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.download-btn {
+  text-decoration: none;
+  background: var(--accent-gold);
+  color: #12151d;
+  font-weight: 700;
+  padding: 8px 18px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  transition: var(--transition);
+}
+
+.download-btn:hover {
+  background: #f0b54d;
+  transform: translateY(-1px);
+}
+
+/* =========================================================
+   Floating Bottom-Right Dock (Record & Full Screen)
+   ========================================================= */
+.floating-bottom-dock {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(18, 21, 29, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  border-radius: 40px;
+  padding: 6px 8px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.floating-bottom-dock:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65), 0 0 15px rgba(229, 169, 60, 0.12);
+}
+
+.dock-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border-radius: 30px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.dock-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.dock-btn:active {
+  transform: translateY(0);
+}
+
+/* Record Button Styling */
+.record-dock-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ff8e8e;
+}
+
+.record-dock-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ffffff;
+}
+
+.record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+  transition: all 0.2s ease;
+}
+
+.record-dock-btn.recording {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: #ef4444;
+  color: #ffffff;
+  animation: recordPulse 2s infinite ease-in-out;
+}
+
+.record-dock-btn.recording .record-dot {
+  border-radius: 2px; /* Square stop icon when recording */
+  transform: scale(0.9);
+  background: #ffffff;
+  box-shadow: 0 0 8px #ffffff;
+}
+
+@keyframes recordPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Recording Live Timer Badge */
+.recording-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff7676;
+  letter-spacing: 0.5px;
+}
+
+.recording-badge.hidden {
+  display: none !important;
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: blinkDot 1s infinite;
+}
+
+@keyframes blinkDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* Full Screen Button Styling */
+.fullscreen-dock-btn {
+  background: rgba(229, 169, 60, 0.12);
+  border-color: rgba(229, 169, 60, 0.3);
+  color: #f5d496;
+}
+
+.fullscreen-dock-btn:hover {
+  background: rgba(229, 169, 60, 0.22);
+  border-color: var(--accent-gold);
+  color: #ffffff;
+}
+
+/* =========================================================
+   Toast Notification
+   ========================================================= */
+.toast-container {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toastIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.toast.fade-out {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.3s ease;
+}
+
+/* =========================================================
+   Full Screen Presentation Mode
+   ========================================================= */
+body.fullscreen-mode .top-header,
+body.fullscreen-mode .studio-toolbar {
+  display: none !important;
+}
+
+body.fullscreen-mode .canvas-viewport {
+  height: 100vh !important;
+  width: 100vw !important;
+}
