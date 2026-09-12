@@ -1,3 +1,4 @@
+import gzip
 import http.server
 import socketserver
 import urllib.request
@@ -30,8 +31,10 @@ def build_request_headers(target_url, resource_type='html'):
         ),
         'Accept':          accept_map.get(resource_type, accept_map['html']),
         'Accept-Language': 'en-US,en;q=0.9',
-        # gzip + deflate only — no 'br' (brotli) since urllib can't decompress it
-        'Accept-Encoding': 'gzip, deflate',
+        # Request no compression — Python's urllib does NOT auto-decompress gzip.
+        # Servers that return compressed bytes mixed with our injected plain-text
+        # produce unrenderable documents (black screen in the iframe).
+        'Accept-Encoding': 'identity',
         'Referer':         origin + '/',
         'Origin':          origin,
         'Sec-Fetch-Dest':  'font' if resource_type == 'font' else ('style' if resource_type == 'css' else 'document'),
@@ -239,6 +242,16 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                 final_url    = resp.geturl()
                 data         = resp.read()
                 content_type = resp.headers.get('Content-Type', 'text/html; charset=utf-8')
+
+                # Safety net: some servers ignore Accept-Encoding: identity and
+                # still return gzip. Decompress here so our rewriting works on
+                # plain text (raw gzip bytes + injected HTML = black screen).
+                content_encoding = resp.headers.get('Content-Encoding', '')
+                if 'gzip' in content_encoding.lower():
+                    try:
+                        data = gzip.decompress(data)
+                    except Exception:
+                        pass  # already plain text or unknown encoding
 
                 # ---- HTML: rewrite links, styles, inline style attrs ----
                 if 'text/html' in content_type.lower():
