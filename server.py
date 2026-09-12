@@ -41,11 +41,41 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                     data = resp.read()
                     content_type = resp.headers.get('Content-Type', 'text/html; charset=utf-8')
 
+                    clean_path = final_url.split('?')[0].lower()
+
+                    # Regex patterns for font and stylesheet proxying
+                    font_regex = re.compile(r'''url\(\s*(['"]?)([^'"\)]+?\.(?:otf|ttf|woff2?|eot)(?:\?[^'"\)]*)?)\s*\1\s*\)''', re.IGNORECASE)
+                    def replace_font_url(match):
+                        q = match.group(1) or ''
+                        p = match.group(2).strip()
+                        if p.startswith(('data:', '/proxy')):
+                            return match.group(0)
+                        full = urllib.parse.urljoin(final_url, p)
+                        return f'url({q}/proxy?url={urllib.parse.quote(full)}{q})'
+
                     if 'text/html' in content_type.lower():
-                        # Try decoding to inject base tag and mobile touch cursor styles
+                        # Try decoding to inject base tag, proxy fonts/stylesheets, and mobile touch cursor styles
                         try:
                             encoding = resp.headers.get_content_charset() or 'utf-8'
                             html_text = data.decode(encoding, errors='replace')
+
+                            # Rewrite any fonts in inline <style> tags
+                            html_text = font_regex.sub(replace_font_url, html_text)
+
+                            # Rewrite stylesheet links to proxy so their @font-face rules are also CORS-proxied
+                            link_regex = re.compile(r'''<link\s+[^>]*rel=['"]stylesheet['"][^>]*>|<link\s+[^>]*href=['"][^'"]+\.css[^'"]*['"][^>]*>''', re.IGNORECASE)
+                            def replace_css_link(match):
+                                tag = match.group(0)
+                                hm = re.search(r'''href=(['"])(.*?)\1''', tag, re.IGNORECASE)
+                                if not hm:
+                                    return tag
+                                href = hm.group(2).strip()
+                                if href.startswith(('data:', 'javascript:', '/proxy')):
+                                    return tag
+                                full_css = urllib.parse.urljoin(final_url, href)
+                                return tag.replace(hm.group(0), f'href="/proxy?url={urllib.parse.quote(full_css)}"')
+
+                            html_text = link_regex.sub(replace_css_link, html_text)
 
                             # Native hardware SVG circular touch cursor (0ms latency), scrollbar removal, and in-page anchor scroll fix
                             injection = f'''
@@ -91,6 +121,29 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                         except Exception as e:
                             pass # fallback to raw bytes if decoding fails
                     
+                    # 2. CSS Processing: Rewrite any font URLs inside stylesheets
+                    elif 'text/css' in content_type.lower() or clean_path.endswith('.css'):
+                        try:
+                            encoding = resp.headers.get_content_charset() or 'utf-8'
+                            css_text = data.decode(encoding, errors='replace')
+                            css_text = font_regex.sub(replace_font_url, css_text)
+                            data = css_text.encode(encoding, errors='replace')
+                            content_type = 'text/css; charset=utf-8'
+                        except Exception:
+                            pass
+
+                    # 3. Font Content-Type normalization for maximum browser compatibility
+                    elif clean_path.endswith('.otf'):
+                        content_type = 'font/otf'
+                    elif clean_path.endswith('.ttf'):
+                        content_type = 'font/ttf'
+                    elif clean_path.endswith('.woff'):
+                        content_type = 'font/woff'
+                    elif clean_path.endswith('.woff2'):
+                        content_type = 'font/woff2'
+                    elif clean_path.endswith('.eot'):
+                        content_type = 'application/vnd.ms-fontobject'
+
                     self.send_response(200)
                     self.send_header('Content-Type', content_type)
                     self.send_header('Content-Length', str(len(data)))

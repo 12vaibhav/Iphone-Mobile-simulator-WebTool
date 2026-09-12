@@ -1,5 +1,35 @@
+function rewriteCssFonts(cssText, baseUrl) {
+  // 1. Rewrite @import rules (e.g. @import url(...) or @import "...")
+  const importRegex = /@import\s+(?:url\(['"]?([^'"\)]+)['"]?\)|['"]([^'"]+)['"])/gi;
+  cssText = cssText.replace(importRegex, (match, url1, url2) => {
+    const rawUrl = (url1 || url2 || '').trim();
+    if (!rawUrl || rawUrl.startsWith('data:') || rawUrl.startsWith('/proxy')) return match;
+    try {
+      const fullUrl = new URL(rawUrl, baseUrl).href;
+      return `@import url("/proxy?url=${encodeURIComponent(fullUrl)}")`;
+    } catch (e) {
+      return match;
+    }
+  });
+
+  // 2. Rewrite url(...) pointing to font files (.woff2, .woff, .ttf, .otf, .eot, etc.)
+  const fontUrlRegex = /url\(\s*(['"]?)([^'"\)]+?\.(?:woff2?|ttf|otf|eot)(?:\?[^'"\)]*)?)\s*\1\s*\)/gi;
+  cssText = cssText.replace(fontUrlRegex, (match, quote, fontUrl) => {
+    const trimmed = fontUrl.trim();
+    if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('/proxy')) return match;
+    try {
+      const fullUrl = new URL(trimmed, baseUrl).href;
+      return `url("/proxy?url=${encodeURIComponent(fullUrl)}")`;
+    } catch (e) {
+      return match;
+    }
+  });
+
+  return cssText;
+}
+
 export default async function handler(req, res) {
-  // Enable CORS
+  // Enable full Cross-Origin Access for all assets
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
@@ -22,16 +52,41 @@ export default async function handler(req, res) {
     const response = await fetch(finalTarget, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        'Accept': '*/*'
       },
       redirect: 'follow'
     });
 
-    const contentType = response.headers.get('content-type') || 'text/html';
+    let contentType = response.headers.get('content-type') || 'text/html';
     const finalUrl = response.url || finalTarget;
+    const cleanPath = finalUrl.split('?')[0].toLowerCase();
 
+    // 1. HTML Processing: Rewrite stylesheets, inline font declarations & inject simulator controls
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
+
+      // Rewrite stylesheet links to proxy so their @font-face rules are also CORS-proxied
+      const linkRegex = /<link\s+[^>]*rel=['"]stylesheet['"][^>]*>|<link\s+[^>]*href=['"][^'"]+\.css[^'"]*['"][^>]*>/gi;
+      htmlText = htmlText.replace(linkRegex, (match) => {
+        const hrefMatch = match.match(/href=(['"])(.*?)\1/i);
+        if (!hrefMatch) return match;
+        const rawHref = hrefMatch[2].trim();
+        if (rawHref.startsWith('data:') || rawHref.startsWith('javascript:') || rawHref.startsWith('/proxy')) {
+          return match;
+        }
+        try {
+          const fullCssUrl = new URL(rawHref, finalUrl).href;
+          return match.replace(hrefMatch[0], `href="/proxy?url=${encodeURIComponent(fullCssUrl)}"`);
+        } catch (e) {
+          return match;
+        }
+      });
+
+      // Rewrite fonts in inline <style> tags
+      const styleTagRegex = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+      htmlText = htmlText.replace(styleTagRegex, (match, styleContent) => {
+        return `<style>${rewriteCssFonts(styleContent, finalUrl)}</style>`;
+      });
 
       const injection = `
 <base href="${finalUrl}">
@@ -74,9 +129,30 @@ export default async function handler(req, res) {
         htmlText = injection + htmlText;
       }
 
-      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.status(200).send(htmlText);
-    } else {
+    } 
+    // 2. CSS Processing: Rewrite font URLs inside stylesheets
+    else if (contentType.includes('text/css') || cleanPath.endsWith('.css')) {
+      let cssText = await response.text();
+      cssText = rewriteCssFonts(cssText, finalUrl);
+      res.setHeader('Content-Type', 'text/css; charset=utf-8');
+      return res.status(200).send(cssText);
+    } 
+    // 3. Font Content-Type normalization for maximum browser compatibility
+    else {
+      if (cleanPath.endsWith('.woff2')) {
+        contentType = 'font/woff2';
+      } else if (cleanPath.endsWith('.woff')) {
+        contentType = 'font/woff';
+      } else if (cleanPath.endsWith('.ttf')) {
+        contentType = 'font/ttf';
+      } else if (cleanPath.endsWith('.otf')) {
+        contentType = 'font/otf';
+      } else if (cleanPath.endsWith('.eot')) {
+        contentType = 'application/vnd.ms-fontobject';
+      }
+
       const buffer = await response.arrayBuffer();
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(Buffer.from(buffer));
