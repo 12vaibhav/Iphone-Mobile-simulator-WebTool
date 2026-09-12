@@ -380,7 +380,7 @@
           ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }
           ::-webkit-scrollbar-track { background: transparent !important; }
           ::-webkit-scrollbar-thumb { background: transparent !important; }
-          html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; overscroll-behavior: none !important; overscroll-behavior-y: none !important; }
+          html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }
         `;
         if (iframeDoc.head) iframeDoc.head.appendChild(style);
       } catch (styleErr) {}
@@ -467,10 +467,10 @@
       const scaleY = availHeight / targetHeight;
       const autoScale = Math.min(scaleX, scaleY, 0.98); // Max 98% scale
 
-      deviceRigContainer.style.transform = `scale(${Math.max(autoScale, 0.35).toFixed(3)})`;
+      deviceRigContainer.style.transform = `translate(-50%, -50%) scale(${Math.max(autoScale, 0.35).toFixed(3)})`;
     } else {
       const fixedScale = parseFloat(scaleMode);
-      deviceRigContainer.style.transform = `scale(${fixedScale})`;
+      deviceRigContainer.style.transform = `translate(-50%, -50%) scale(${fixedScale})`;
     }
   }
 
@@ -486,12 +486,26 @@
   canvasViewport.addEventListener('scroll', preventContainerScroll, { passive: true });
   window.addEventListener('scroll', preventContainerScroll, { passive: true });
 
-  // Prevent wheel events from scrolling the canvas background
+  // Forward wheel scrolling from canvas or phone frame to the simulator iframe
   canvasViewport.addEventListener('wheel', (e) => {
-    if (e.target === canvasViewport || e.target === sceneBackground || e.target === deviceRigContainer) {
-      e.preventDefault();
-    }
-  }, { passive: false });
+    try {
+      const iframeWin = simulatorIframe.contentWindow;
+      if (iframeWin) {
+        iframeWin.scrollBy({
+          top: e.deltaY,
+          left: e.deltaX,
+          behavior: 'auto'
+        });
+        const iframeDoc = simulatorIframe.contentDocument || iframeWin.document;
+        if (iframeDoc && iframeDoc.scrollingElement && iframeDoc.scrollingElement.scrollTop === 0 && e.deltaY > 0) {
+          const mainScroller = iframeDoc.querySelector('main, #root, #__next, .overflow-y-auto, [data-scroll-container]');
+          if (mainScroller && mainScroller.scrollHeight > mainScroller.clientHeight) {
+            mainScroller.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: 'auto' });
+          }
+        }
+      }
+    } catch (err) {}
+  }, { passive: true });
 
   // Orientation Toggle
   orientationBtn.addEventListener('click', () => {
