@@ -2,19 +2,24 @@
 // URL helpers
 // ---------------------------------------------------------------------------
 
-/** Build an /api/proxy?url=... path for a given absolute asset URL. */
-function makeProxyUrl(absUrl) {
-  return `/api/proxy?url=${encodeURIComponent(absUrl)}`;
+/**
+ * Build a fully-qualified proxy URL for a given absolute asset URL.
+ * Using the proxy's full origin ensures <base href="..."> on the target document
+ * does NOT resolve this URL against the remote target domain!
+ */
+function makeProxyUrl(absUrl, proxyOrigin = '') {
+  const pfx = proxyOrigin ? proxyOrigin.replace(/\/+$/, '') : '';
+  return `${pfx}/api/proxy?url=${encodeURIComponent(absUrl)}`;
 }
 
 /**
  * Resolve a raw URL (relative, root-relative, protocol-relative, or absolute)
- * against baseUrl.  Returns null for URLs that must NOT be proxied.
+ * against baseUrl. Returns null for URLs that must NOT be proxied.
  */
 function resolveToAbsolute(raw, baseUrl) {
-  raw = raw.trim();
-  if (!raw || raw.startsWith('data:') || raw.startsWith('/api/proxy?') ||
-      raw.startsWith('#') || raw.startsWith('about:')) {
+  raw = (raw || '').trim();
+  if (!raw || raw.startsWith('data:') || raw.includes('/api/proxy?') || raw.includes('/proxy?') ||
+      raw.startsWith('#') || raw.startsWith('about:') || raw.startsWith('javascript:')) {
     return null;
   }
   try {
@@ -29,129 +34,177 @@ function resolveToAbsolute(raw, baseUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Request headers — mimic real mobile Safari so CDNs serve the right assets.
+// Resource Detection & Headers
 // ---------------------------------------------------------------------------
+
+function detectResourceType(targetUrl, contentType = '') {
+  const low = targetUrl.toLowerCase().split('?')[0].split('#')[0];
+  const ct = (contentType || '').toLowerCase();
+
+  if (/\.(woff2?|ttf|otf|eot)(\?|$)/.test(low) || ct.includes('font')) return 'font';
+  if (low.endsWith('.css') || ct.includes('text/css')) return 'css';
+  if (/\.(png|jpe?g|webp|avif|gif|svg|ico|bmp|cur)(\?|$)/.test(low) || ct.includes('image/')) return 'image';
+  return 'html';
+}
+
 function buildHeaders(targetUrl, resourceType = 'html') {
-  let origin;
+  let origin = '';
   try { origin = new URL(targetUrl).origin; } catch { origin = ''; }
 
   const acceptMap = {
-    font: '*/*',
-    css:  'text/css,*/*;q=0.1',
-    html: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    font:  '*/*',
+    css:   'text/css,*/*;q=0.1',
+    image: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    html:  'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   };
 
-  return {
+  const destMap = {
+    font:  'font',
+    css:   'style',
+    image: 'image',
+    html:  'document',
+  };
+
+  const modeMap = {
+    font:  'cors',
+    css:   'cors',
+    image: 'no-cors',
+    html:  'navigate',
+  };
+
+  const headers = {
     'User-Agent':
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ' +
       'AppleWebKit/605.1.15 (KHTML, like Gecko) ' +
       'Version/17.0 Mobile/15E148 Safari/604.1',
     'Accept':          acceptMap[resourceType] || acceptMap.html,
     'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',   // Node fetch handles brotli fine
-    'Referer':         origin + '/',
-    'Origin':          origin,
-    'Sec-Fetch-Dest':
-      resourceType === 'font' ? 'font' : resourceType === 'css' ? 'style' : 'document',
-    'Sec-Fetch-Mode':  (resourceType === 'font' || resourceType === 'css') ? 'cors' : 'navigate',
-    'Sec-Fetch-Site':  'same-origin',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Referer':         targetUrl,
+    'Sec-Fetch-Dest':  destMap[resourceType] || 'empty',
+    'Sec-Fetch-Mode':  modeMap[resourceType] || 'cors',
+    'Sec-Fetch-Site':  'cross-site',
   };
+
+  if (resourceType === 'font' || resourceType === 'css') {
+    headers['Origin'] = origin;
+  }
+
+  return headers;
+}
+
+function getSafeContentType(targetUrl, upstreamCt) {
+  const low = targetUrl.toLowerCase().split('?')[0].split('#')[0];
+  const ct = (upstreamCt || '').trim();
+
+  const fontMimes = {
+    '.woff2': 'font/woff2',
+    '.woff':  'font/woff',
+    '.ttf':   'font/ttf',
+    '.otf':   'font/otf',
+    '.eot':   'application/vnd.ms-fontobject',
+  };
+  const imageMimes = {
+    '.png':  'image/png',
+    '.jpg':  'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
+    '.gif':  'image/gif',
+    '.svg':  'image/svg+xml',
+    '.ico':  'image/x-icon',
+  };
+
+  for (const [ext, mime] of Object.entries(fontMimes)) {
+    if (low.endsWith(ext)) return mime;
+  }
+  for (const [ext, mime] of Object.entries(imageMimes)) {
+    if (low.endsWith(ext)) return mime;
+  }
+
+  if ((!ct || ct.toLowerCase().startsWith('text/plain') || ct.toLowerCase().startsWith('application/octet-stream')) && low.endsWith('.css')) {
+    return 'text/css; charset=utf-8';
+  }
+
+  return ct || 'text/html; charset=utf-8';
 }
 
 // ---------------------------------------------------------------------------
-// CSS rewriting — rewrites ALL url() and @import references
+// CSS Rewriting
 // ---------------------------------------------------------------------------
 
-/**
- * Rewrite every url(...) and @import statement in CSS so that ALL assets
- * (fonts, background images, sprites, icon sets …) load through the proxy.
- * This is the single most important fix — <base href> does NOT affect CSS url().
- */
-function rewriteCssUrls(cssText, baseUrl) {
-  // url("..."), url('...'), url(...)
-  cssText = cssText.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, (match, quote, raw) => {
+const CSS_URL_PATTERN = /url\(\s*(?:(['"]|&quot;|&#39;)(.*?)\1|([^)'"\s]+))\s*\)/gi;
+
+function rewriteCssUrls(cssText, baseUrl, proxyOrigin = '') {
+  cssText = cssText.replace(CSS_URL_PATTERN, (match, q, quotedUrl, unquotedUrl) => {
+    const raw = quotedUrl !== undefined ? quotedUrl : unquotedUrl;
+    if (!raw) return match;
     const abs = resolveToAbsolute(raw, baseUrl);
     if (!abs) return match;
-    return `url(${quote}${makeProxyUrl(abs)}${quote})`;
+    const quote = (q === "'" || q === '"') ? q : '"';
+    return `url(${quote}${makeProxyUrl(abs, proxyOrigin)}${quote})`;
   });
 
-  // @import "..." and @import '...' (without url() wrapper — common in Google Fonts CSS)
-  cssText = cssText.replace(/@import\s+(['"])([^'"]+)\1/g, (match, quote, raw) => {
+  // @import "..." and @import '...' (without url() wrapper)
+  cssText = cssText.replace(/@import\s+(['"]|&quot;|&#39;)([^"'\s;]+)\1/gi, (match, q, raw) => {
     const abs = resolveToAbsolute(raw, baseUrl);
     if (!abs) return match;
-    return `@import ${quote}${makeProxyUrl(abs)}${quote}`;
+    return `@import "${makeProxyUrl(abs, proxyOrigin)}"`;
   });
 
   return cssText;
 }
 
 // ---------------------------------------------------------------------------
-// HTML rewriting helpers
+// HTML Rewriting Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Rewrite url() inside every <style>...</style> block.
- * Preserves original <style> tag attributes (type, scoped, etc.).
- */
-function rewriteStyleTags(htmlText, baseUrl) {
+function stripMetaSecurityTags(htmlText) {
+  return htmlText.replace(/<meta\b[^>]*http-equiv\s*=\s*['"]?(?:content-security-policy|x-frame-options)['"]?[^>]*>/gi, '');
+}
+
+function rewriteStyleTags(htmlText, baseUrl, proxyOrigin = '') {
   return htmlText.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi,
     (match, openTag, css, closeTag) =>
-      `${openTag}${rewriteCssUrls(css, baseUrl)}${closeTag}`
+      `${openTag}${rewriteCssUrls(css, baseUrl, proxyOrigin)}${closeTag}`
   );
 }
 
-/**
- * Rewrite url() inside inline style="..." attributes on HTML elements.
- * Fixes background-image, background, list-style-image, mask-image, etc.
- * <base href> does NOT fix these — browsers resolve CSS urls against the
- * CSS file/document location, NOT the <base> tag.
- */
-function rewriteStyleAttributes(htmlText, baseUrl) {
-  // Double-quoted style attributes
+function rewriteStyleAttributes(htmlText, baseUrl, proxyOrigin = '') {
   htmlText = htmlText.replace(/style="([^"]*)"/gi,
-    (match, val) => `style="${rewriteCssUrls(val, baseUrl)}"`
+    (match, val) => `style="${rewriteCssUrls(val, baseUrl, proxyOrigin)}"`
   );
-  // Single-quoted style attributes
   htmlText = htmlText.replace(/style='([^']*)'/gi,
-    (match, val) => `style='${rewriteCssUrls(val, baseUrl)}'`
+    (match, val) => `style='${rewriteCssUrls(val, baseUrl, proxyOrigin)}'`
   );
   return htmlText;
 }
 
-/**
- * Proxy <link> tags that are:
- *   - rel="stylesheet"        → must go through proxy so their CSS gets rewritten
- *   - rel="preload" as="font" → font preload hints that would bypass the proxy
- * Also removes <link rel="preconnect"> hints — these make the browser open
- * direct connections to font CDNs, causing fonts to load cross-origin without
- * our CORS headers.
- */
-function rewriteLinkTags(htmlText, baseUrl) {
-  return htmlText.replace(/<link[^>]+>/gi, (tag) => {
-    // Drop preconnect hints entirely
-    if (/rel=['"]preconnect['"]/i.test(tag)) return '';
+function rewriteLinkTags(htmlText, baseUrl, proxyOrigin = '') {
+  return htmlText.replace(/<link\b[^>]+>/gi, (tag) => {
+    // Drop preconnect / dns-prefetch hints
+    if (/rel=['"]?(?:preconnect|dns-prefetch)['"]?/i.test(tag)) return '';
 
-    const isStylesheet   = /rel=['"][^'"]*stylesheet[^'"]*['"]/i.test(tag);
-    const isFontPreload  = /rel=['"][^'"]*preload[^'"]*['"]/i.test(tag) &&
-                           /as=['"]font['"]/i.test(tag);
+    const isStylesheet = /rel=['"]?[^"'>]*stylesheet[^"'>]*['"]?/i.test(tag);
+    const isPreload    = /rel=['"]?[^"'>]*preload[^"'>]*['"]?/i.test(tag);
+    const asMatch      = tag.match(/as=['"]?(font|style|image)['"]?/i);
 
-    if (!isStylesheet && !isFontPreload) return tag;
+    if (!isStylesheet && !(isPreload && asMatch)) return tag;
 
-    const hrefMatch = tag.match(/href=(['"])([^'"]+)\1/i);
+    const hrefMatch = tag.match(/href=(['"]?)([^"'\s>]+)\1/i);
     if (!hrefMatch) return tag;
 
     const abs = resolveToAbsolute(hrefMatch[2], baseUrl);
     if (!abs) return tag;
 
-    // Replace only the href value, keep all other attributes intact
-    return tag.slice(0, hrefMatch.index + 6) +          // 'href=' prefix
-           hrefMatch[1] + makeProxyUrl(abs) + hrefMatch[1] +
-           tag.slice(hrefMatch.index + hrefMatch[0].length);
+    const quote = hrefMatch[1] || '"';
+    const newHref = `href=${quote}${makeProxyUrl(abs, proxyOrigin)}${quote}`;
+    return tag.slice(0, hrefMatch.index) + newHref + tag.slice(hrefMatch.index + hrefMatch[0].length);
   });
 }
 
 // ---------------------------------------------------------------------------
-// Vercel serverless handler
+// Vercel Serverless Handler
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
   // CORS + CORP headers on every response
@@ -169,37 +222,40 @@ export default async function handler(req, res) {
   let finalTarget = targetUrl;
   if (!/^https?:\/\//i.test(finalTarget)) finalTarget = 'https://' + finalTarget;
 
+  // Determine proxy origin so rewritten URLs are fully-qualified
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const proxyOrigin = `${proto}://${host}`;
+
   try {
-    // Detect resource type by file extension for smarter request headers.
-    // Note: Google Fonts URLs end in e.g. /css2?family=... — no .css extension,
-    // but their Content-Type response is text/css, so rewriting still applies.
-    const lowPath = finalTarget.toLowerCase().split('?')[0];
-    let resourceType = 'html';
-    if (/\.(woff2?|ttf|otf|eot)(\?|$)/.test(lowPath)) resourceType = 'font';
-    else if (lowPath.endsWith('.css'))                  resourceType = 'css';
+    const resourceType = detectResourceType(finalTarget);
 
     const response = await fetch(finalTarget, {
       headers:  buildHeaders(finalTarget, resourceType),
       redirect: 'follow',
     });
 
-    const contentType = response.headers.get('content-type') || 'text/html';
-    const finalUrl    = response.url || finalTarget;
+    const rawContentType = response.headers.get('content-type') || '';
+    const finalUrl       = response.url || finalTarget;
+    const contentType    = getSafeContentType(finalUrl, rawContentType);
 
     // ---- HTML ----
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
 
-      // 1. Proxy <link rel="stylesheet"> and font preload hrefs
-      htmlText = rewriteLinkTags(htmlText, finalUrl);
+      // Strip CSP & frame-ancestors meta tags that block fonts/iframes
+      htmlText = stripMetaSecurityTags(htmlText);
 
-      // 2. Rewrite url() inside <style> blocks (covers fonts + background images)
-      htmlText = rewriteStyleTags(htmlText, finalUrl);
+      // Proxy <link rel="stylesheet">, preload as="font|style|image"
+      htmlText = rewriteLinkTags(htmlText, finalUrl, proxyOrigin);
 
-      // 3. Rewrite url() inside inline style="..." attributes (background images)
-      htmlText = rewriteStyleAttributes(htmlText, finalUrl);
+      // Rewrite url() inside <style> blocks (covers fonts + background images)
+      htmlText = rewriteStyleTags(htmlText, finalUrl, proxyOrigin);
 
-      // 4. Inject simulator utilities + runtime font proxy
+      // Rewrite url() inside inline style="..." attributes (background images)
+      htmlText = rewriteStyleAttributes(htmlText, finalUrl, proxyOrigin);
+
+      // Inject simulator utilities + runtime font proxy
       const injection = `
 <base href="${finalUrl}">
 <style id="simulator-mobile-styles">
@@ -210,14 +266,13 @@ export default async function handler(req, res) {
   html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }
 </style>
 <script id="simulator-font-proxy">
-/* Runtime font proxy — intercepts JS-dynamically-inserted <link>/<style> elements
-   that bypass server-side rewriting (React, Next.js, Vue chunk CSS, CSS-in-JS).
-   Uses document.baseURI (which respects <base href>) for correct URL resolution. */
+/* Runtime font & asset proxy: intercepts JS-dynamically-inserted <link>/<style>,
+   inline styles, CSSStyleSheet insertRule, and FontFace constructor. */
 (function(){
   var PFX = location.origin + '/api/proxy?url=';
 
   function alreadyProxied(u) {
-    return !u || u.indexOf('/api/proxy?url=') > -1 || u.startsWith('data:') || u.startsWith('blob:');
+    return !u || u.indexOf('/proxy?url=') > -1 || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:');
   }
 
   function toProxy(rawUrl) {
@@ -228,37 +283,83 @@ export default async function handler(req, res) {
     } catch(e) { return rawUrl; }
   }
 
+  function rewriteCssString(css) {
+    if (!css || css.indexOf('url(') === -1) return css;
+    return css.replace(/url\(\s*(?:(['"]|&quot;|&#39;)(.*?)\1|([^)'"\\s]+))\s*\)/gi, function(m, q, quotedUrl, unquotedUrl) {
+      var raw = quotedUrl !== undefined ? quotedUrl : unquotedUrl;
+      if (alreadyProxied(raw)) return m;
+      try {
+        var abs = new URL(raw, document.baseURI).href;
+        var quote = (q === "'" || q === '"') ? q : '"';
+        return 'url(' + quote + PFX + encodeURIComponent(abs) + quote + ')';
+      } catch(e) { return m; }
+    });
+  }
+
+  /* Intercept JavaScript FontFace constructor */
+  if (window.FontFace) {
+    var OrigFontFace = window.FontFace;
+    window.FontFace = function(family, source, descriptors) {
+      if (typeof source === 'string') {
+        source = rewriteCssString(source);
+      }
+      return new OrigFontFace(family, source, descriptors);
+    };
+    window.FontFace.prototype = OrigFontFace.prototype;
+  }
+
+  /* Intercept CSSStyleSheet.prototype.insertRule for CSS-in-JS frameworks */
+  var _ir = CSSStyleSheet.prototype.insertRule;
+  CSSStyleSheet.prototype.insertRule = function(rule, idx) {
+    try {
+      if (typeof rule === 'string' && rule.indexOf('url(') > -1) {
+        rule = rewriteCssString(rule);
+      }
+    } catch(e) {}
+    return _ir.call(this, rule, idx);
+  };
+
+  /* Patch <link> */
   function patchLink(el) {
     try {
       var rel = (el.getAttribute('rel') || '').toLowerCase();
+      var asAttr = (el.getAttribute('as') || '').toLowerCase();
       var isSheet = rel.indexOf('stylesheet') > -1;
-      var isFont  = rel.indexOf('preload') > -1 && el.getAttribute('as') === 'font';
-      if (!isSheet && !isFont) return;
+      var isPreload = rel.indexOf('preload') > -1 && (asAttr === 'font' || asAttr === 'style' || asAttr === 'image');
+      if (!isSheet && !isPreload) return;
       var h = el.getAttribute('href');
       if (h && !alreadyProxied(h)) el.setAttribute('href', toProxy(h));
     } catch(e) {}
   }
 
+  /* Patch <style> */
   function patchStyle(el) {
     try {
       var t = el.textContent;
       if (!t || t.indexOf('url(') < 0) return;
-      var rewritten = t.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, function(m, q, raw) {
-        if (alreadyProxied(raw) || raw.startsWith('data:')) return m;
-        try {
-          var abs = new URL(raw, document.baseURI).href;
-          return 'url(' + q + PFX + encodeURIComponent(abs) + q + ')';
-        } catch(e) { return m; }
-      });
+      var rewritten = rewriteCssString(t);
       if (rewritten !== t) el.textContent = rewritten;
+    } catch(e) {}
+  }
+
+  /* Patch inline style attributes */
+  function patchElementStyle(el) {
+    try {
+      if (!el || !el.getAttribute) return;
+      var s = el.getAttribute('style');
+      if (s && s.indexOf('url(') > -1) {
+        var rewritten = rewriteCssString(s);
+        if (rewritten !== s) el.setAttribute('style', rewritten);
+      }
     } catch(e) {}
   }
 
   function patchNode(n) {
     if (!n || n.nodeType !== 1) return;
     var tag = n.tagName ? n.tagName.toUpperCase() : '';
-    if (tag === 'LINK')  patchLink(n);
-    if (tag === 'STYLE') patchStyle(n);
+    if (tag === 'LINK') patchLink(n);
+    else if (tag === 'STYLE') patchStyle(n);
+    patchElementStyle(n);
   }
 
   var _ac = Element.prototype.appendChild;
@@ -280,15 +381,19 @@ export default async function handler(req, res) {
 
   new MutationObserver(function(muts) {
     muts.forEach(function(m) {
+      if (m.type === 'attributes' && m.attributeName === 'style') {
+        patchElementStyle(m.target);
+      }
       m.addedNodes.forEach(function(n) {
         patchNode(n);
         if (n.querySelectorAll) {
           n.querySelectorAll('link').forEach(patchLink);
           n.querySelectorAll('style').forEach(patchStyle);
+          n.querySelectorAll('[style*="url("]').forEach(patchElementStyle);
         }
       });
     });
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
 })();
 </script>
 <script id="simulator-anchor-fix">
@@ -315,7 +420,6 @@ export default async function handler(req, res) {
 </script>
 `;
       if (/<head[^>]*>/i.test(htmlText)) {
-        // Use a function so backslashes in 'injection' are literal, not replacement patterns
         htmlText = htmlText.replace(/(<head[^>]*>)/i, (m, tag) => tag + injection);
       } else {
         htmlText = injection + htmlText;
@@ -327,7 +431,7 @@ export default async function handler(req, res) {
     // ---- CSS: rewrite ALL url() and @import refs ----
     } else if (contentType.includes('text/css')) {
       let cssText = await response.text();
-      cssText = rewriteCssUrls(cssText, finalUrl);
+      cssText = rewriteCssUrls(cssText, finalUrl, proxyOrigin);
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(cssText);
 
