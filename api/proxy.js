@@ -1,8 +1,84 @@
+function makeProxyUrl(assetUrl) {
+  return `/api/proxy?url=${encodeURIComponent(assetUrl)}`;
+}
+
+function rewriteFontFacesInCss(cssText, baseUrl) {
+  try {
+    const parsedBase = new URL(baseUrl);
+    const baseOrigin = parsedBase.origin;
+
+    return cssText.replace(/url\((["']?)([^)"'\s]+)\1\)/gi, (match, quote, raw) => {
+      const trimmed = raw.trim();
+      if (trimmed.startsWith('data:') || trimmed.startsWith('/api/proxy') || trimmed.startsWith('/proxy')) {
+        return match;
+      }
+
+      let absUrl;
+      if (trimmed.startsWith('//')) {
+        absUrl = parsedBase.protocol + trimmed;
+      } else if (trimmed.startsWith('/')) {
+        absUrl = baseOrigin + trimmed;
+      } else if (/^https?:\/\//i.test(trimmed)) {
+        absUrl = trimmed;
+      } else {
+        absUrl = new URL(trimmed, baseUrl).href;
+      }
+
+      const proxied = makeProxyUrl(absUrl);
+      return `url(${quote}${proxied}${quote})`;
+    });
+  } catch (e) {
+    return cssText;
+  }
+}
+
+function rewriteInlineStylesInHtml(htmlText, baseUrl) {
+  return htmlText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, css) => {
+    const rewritten = rewriteFontFacesInCss(css, baseUrl);
+    return `<style>${rewritten}</style>`;
+  });
+}
+
+function rewriteLinkStylesheetsInHtml(htmlText, baseUrl) {
+  try {
+    const parsedBase = new URL(baseUrl);
+    const baseOrigin = parsedBase.origin;
+
+    return htmlText.replace(/<link[^>]+>/gi, (match) => {
+      if (!/rel=["']stylesheet["']/i.test(match)) return match;
+      const hrefMatch = match.match(/href=["']([^"']+)["']/i);
+      if (!hrefMatch) return match;
+
+      const raw = hrefMatch[1].trim();
+      if (raw.startsWith('data:') || raw.startsWith('/api/proxy') || raw.startsWith('/proxy')) {
+        return match;
+      }
+
+      let absUrl;
+      if (raw.startsWith('//')) {
+        absUrl = parsedBase.protocol + raw;
+      } else if (raw.startsWith('/')) {
+        absUrl = baseOrigin + raw;
+      } else if (/^https?:\/\//i.test(raw)) {
+        absUrl = raw;
+      } else {
+        absUrl = new URL(raw, baseUrl).href;
+      }
+
+      const proxied = makeProxyUrl(absUrl);
+      return match.replace(hrefMatch[1], proxied);
+    });
+  } catch (e) {
+    return htmlText;
+  }
+}
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -19,11 +95,34 @@ export default async function handler(req, res) {
   }
 
   try {
+    let parsedTarget;
+    try {
+      parsedTarget = new URL(finalTarget);
+    } catch (err) {
+      return res.status(400).send('Invalid URL');
+    }
+
+    const low = parsedTarget.pathname.toLowerCase();
+    let resourceType = 'html';
+    if (/\.(woff|woff2|ttf|otf|eot)$/i.test(low)) {
+      resourceType = 'font';
+    } else if (/\.css$/i.test(low)) {
+      resourceType = 'css';
+    }
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      'Accept': resourceType === 'font' ? '*/*' : (resourceType === 'css' ? 'text/css,*/*;q=0.1' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': parsedTarget.origin + '/',
+      'Origin': parsedTarget.origin,
+      'Sec-Fetch-Dest': resourceType === 'font' ? 'font' : (resourceType === 'css' ? 'style' : 'document'),
+      'Sec-Fetch-Mode': resourceType === 'html' ? 'navigate' : 'cors',
+      'Sec-Fetch-Site': 'same-origin'
+    };
+
     const response = await fetch(finalTarget, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      },
+      headers,
       redirect: 'follow'
     });
 
@@ -32,6 +131,9 @@ export default async function handler(req, res) {
 
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
+
+      htmlText = rewriteLinkStylesheetsInHtml(htmlText, finalUrl);
+      htmlText = rewriteInlineStylesInHtml(htmlText, finalUrl);
 
       const injection = `
 <base href="${finalUrl}">
@@ -76,6 +178,11 @@ export default async function handler(req, res) {
 
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(htmlText);
+    } else if (contentType.includes('text/css')) {
+      let cssText = await response.text();
+      cssText = rewriteFontFacesInCss(cssText, finalUrl);
+      res.setHeader('Content-Type', contentType);
+      return res.status(200).send(cssText);
     } else {
       const buffer = await response.arrayBuffer();
       res.setHeader('Content-Type', contentType);
