@@ -418,13 +418,12 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
 
   function rewriteCssString(css) {{
     if (!css || css.indexOf('url(') === -1) return css;
-    return css.replace(/url\\(\\s*(?:(['"]|&quot;|&#39;)(.*?)\\1|([^)'"\\\\s]+))\\s*\\)/gi, function(m, q, quotedUrl, unquotedUrl) {{
-      var raw = quotedUrl !== undefined ? quotedUrl : unquotedUrl;
+    return css.replace(/url\\(\\s*['"]?([^'")]+)['"]?\\s*\\)/gi, function(m, raw) {{
+      raw = (raw || '').trim().replace(/^(&quot;|&#39;)/, '').replace(/(&quot;|&#39;)$/, '');
       if (alreadyProxied(raw)) return m;
       try {{
         var abs = new URL(raw, document.baseURI).href;
-        var quote = (q === "'" || q === '"') ? q : '"';
-        return 'url(' + quote + PFX + encodeURIComponent(abs) + quote + ')';
+        return 'url("' + PFX + encodeURIComponent(abs) + '")';
       }} catch(e) {{ return m; }}
     }});
   }}
