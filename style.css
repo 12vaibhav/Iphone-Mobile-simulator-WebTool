@@ -519,9 +519,9 @@ html, body {
 .device-screen {
   position: absolute;
   left: 5.75%;
-  top: 2.35%;
+  top: 2.25%;
   width: 89.4%;
-  height: 95.2%;
+  height: 95.6%;
   border-radius: 46px;
   overflow: hidden;
   background: #000000;
