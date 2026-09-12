@@ -605,8 +605,99 @@
     recordingBadge.classList.add('hidden');
   }
 
-  // Optimized fallback render loop (only runs if native CropTarget is unavailable)
-  function renderCroppedDeviceLoop() {
+  // Fixes WebM duration header so browser players play with 100% hardware smooth 1.0x speed
+  async function fixWebmDuration(blob, durationMs) {
+    try {
+      const buffer = await blob.arrayBuffer();
+      const u8 = new Uint8Array(buffer);
+
+      // Find Segment Info: 0x15 0x49 0xA9 0x66
+      let infoPos = -1;
+      for (let i = 0; i < Math.min(u8.length - 4, 1024); i++) {
+        if (u8[i] === 0x15 && u8[i+1] === 0x49 && u8[i+2] === 0xA9 && u8[i+3] === 0x66) {
+          infoPos = i;
+          break;
+        }
+      }
+      if (infoPos === -1) return blob;
+
+      // Find TimecodeScale: 0x2A 0xD7 0xB1
+      let timecodeScale = 1000000;
+      for (let i = infoPos; i < Math.min(infoPos + 200, u8.length - 7); i++) {
+        if (u8[i] === 0x2A && u8[i+1] === 0xD7 && u8[i+2] === 0xB1) {
+          const size = u8[i+3] & 0x07;
+          let val = 0;
+          for (let j = 0; j < size; j++) {
+            val = (val << 8) | u8[i + 4 + j];
+          }
+          if (val > 0) timecodeScale = val;
+          break;
+        }
+      }
+
+      const durationVal = durationMs * 1000000 / timecodeScale;
+
+      // Check if Duration (0x44 0x89) exists inside Info
+      for (let i = infoPos; i < Math.min(infoPos + 200, u8.length - 10); i++) {
+        if (u8[i] === 0x44 && u8[i+1] === 0x89) {
+          const dataSize = u8[i+2] & 0x0F;
+          const view = new DataView(buffer);
+          if (dataSize === 4) {
+            view.setFloat32(i + 3, durationVal, false);
+          } else if (dataSize === 8) {
+            view.setFloat64(i + 3, durationVal, false);
+          }
+          return new Blob([buffer], { type: blob.type });
+        }
+      }
+
+      // Duration not present: insert 0x44 0x89 [0x84] [float32] (7 bytes) into Info
+      let offset = infoPos + 4;
+      let infoSizeLen = 1;
+      let b = u8[offset];
+      let mask = 0x80;
+      while ((b & mask) === 0 && infoSizeLen < 8) {
+        infoSizeLen++;
+        mask >>= 1;
+      }
+
+      const durBytes = new Uint8Array(7);
+      durBytes[0] = 0x44;
+      durBytes[1] = 0x89;
+      durBytes[2] = 0x84; // 4-byte float
+      new DataView(durBytes.buffer).setFloat32(3, durationVal, false);
+
+      const insertPos = offset + infoSizeLen;
+      const newBuf = new Uint8Array(buffer.byteLength + 7);
+      newBuf.set(u8.subarray(0, insertPos), 0);
+      newBuf.set(durBytes, insertPos);
+      newBuf.set(u8.subarray(insertPos), insertPos + 7);
+
+      // Update Info element size
+      let infoSize = 0;
+      for (let j = 0; j < infoSizeLen; j++) {
+        const byte = u8[offset + j];
+        infoSize = (infoSize << 8) | (j === 0 ? (byte & (mask - 1)) : byte);
+      }
+      infoSize += 7;
+      for (let j = infoSizeLen - 1; j >= 0; j--) {
+        let byte = (infoSize >>> ((infoSizeLen - 1 - j) * 8)) & 0xFF;
+        if (j === 0) byte |= mask;
+        newBuf[offset + j] = byte;
+      }
+
+      return new Blob([newBuf.buffer], { type: blob.type });
+    } catch (err) {
+      console.warn('WebM duration fix skipped:', err);
+      return blob;
+    }
+  }
+
+  // Optimized fallback render loop with 30 FPS timing
+  let lastDrawTime = 0;
+  const targetFrameInterval = 1000 / 30; // 33.33ms
+
+  function drawCroppedFrame() {
     if (!isRecording || isNativeCropActive || !helperVideo || !cropCtx) return;
 
     try {
@@ -625,24 +716,45 @@
         const sHeight = Math.min(vHeight - sy, rect.height * scaleY);
 
         if (sWidth > 10 && sHeight > 10) {
-          const isLandscapeMode = deviceWrapper.classList.contains('landscape');
-          // 1080p High-DPI Output (1080 width in portrait; 1920 width in landscape)
-          const targetW = isLandscapeMode ? 1920 : 1080;
-          const targetH = isLandscapeMode ? 940 : 2206;
+          const targetW = Math.round(sWidth);
+          const targetH = Math.round(sHeight);
 
           if (cropCanvas.width !== targetW || cropCanvas.height !== targetH) {
             cropCanvas.width = targetW;
             cropCanvas.height = targetH;
           }
 
+          // Direct 1:1 hardware blit (instantaneous, 0ms CPU load)
           cropCtx.drawImage(helperVideo, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
         }
       }
     } catch (err) {
       console.warn('Fallback crop render notice:', err);
     }
+  }
 
-    cropAnimFrameId = requestAnimationFrame(renderCroppedDeviceLoop);
+  function scheduleNextFrame() {
+    if (!isRecording || isNativeCropActive) return;
+
+    if (helperVideo && 'requestVideoFrameCallback' in helperVideo) {
+      helperVideo.requestVideoFrameCallback((now) => {
+        if (!isRecording || isNativeCropActive) return;
+        if (now - lastDrawTime >= targetFrameInterval - 3) {
+          lastDrawTime = now;
+          drawCroppedFrame();
+        }
+        scheduleNextFrame();
+      });
+    } else {
+      cropAnimFrameId = requestAnimationFrame((timestamp) => {
+        if (!isRecording || isNativeCropActive) return;
+        if (timestamp - lastDrawTime >= targetFrameInterval - 3) {
+          lastDrawTime = timestamp;
+          drawCroppedFrame();
+        }
+        scheduleNextFrame();
+      });
+    }
   }
 
   async function startScreenRecording() {
@@ -654,16 +766,17 @@
     try {
       updateCachedRect();
 
-      // Request screen stream with 1080p Full HD resolution at 30 FPS
+      // Request screen stream with 60 FPS capture capability for silky smooth source frames
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
           width: { ideal: 1920, max: 2560 },
           height: { ideal: 1080, max: 1440 },
-          frameRate: { ideal: 30, max: 30 }
+          frameRate: { ideal: 60, max: 60 }
         },
         audio: true,
-        preferCurrentTab: true
+        preferCurrentTab: true,
+        selfBrowserSurface: 'include'
       });
 
       isNativeCropActive = false;
@@ -680,17 +793,21 @@
             finalStreamToRecord = rawDisplayStream;
           }
         } catch (cropErr) {
-          console.log('Region capture fallback to 1080p canvas:', cropErr);
+          console.log('Region capture fallback to canvas:', cropErr);
         }
       }
 
-      // 2. 1080p Canvas Fallback if native CropTarget is unsupported
+      // 2. Hardware Canvas Fallback if native CropTarget is unsupported
       if (!isNativeCropActive) {
         if (!helperVideo) {
           helperVideo = document.createElement('video');
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
+          helperVideo.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-9999;';
+        }
+        if (!helperVideo.isConnected) {
+          document.body.appendChild(helperVideo);
         }
         helperVideo.srcObject = rawDisplayStream;
         await helperVideo.play();
@@ -700,13 +817,11 @@
           cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
         }
 
-        const isLandscapeMode = deviceWrapper.classList.contains('landscape');
-        cropCanvas.width = isLandscapeMode ? 1920 : 1080;
-        cropCanvas.height = isLandscapeMode ? 940 : 2206;
+        lastDrawTime = performance.now();
+        drawCroppedFrame();
+        scheduleNextFrame();
 
-        renderCroppedDeviceLoop();
-
-        croppedStream = cropCanvas.captureStream(30); // 30 FPS
+        croppedStream = cropCanvas.captureStream(30); // Exactly 30 FPS stream
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
         finalStreamToRecord = croppedStream;
       }
@@ -733,9 +848,15 @@
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const durationSec = Math.floor((Date.now() - recordStartTime) / 1000);
-        const finalBlob = new Blob(recordedChunks, { type: selectedMime });
+        const durationMs = Date.now() - recordStartTime;
+        let finalBlob = new Blob(recordedChunks, { type: selectedMime });
+
+        // Patch WebM duration header so video element and players play with 100% hardware smooth 1.0x speed
+        if (selectedMime.includes('webm') && durationMs > 500) {
+          finalBlob = await fixWebmDuration(finalBlob, durationMs);
+        }
 
         if (currentVideoUrl) {
           URL.revokeObjectURL(currentVideoUrl);
@@ -768,7 +889,8 @@
         };
       }
 
-      mediaRecorder.start(1000);
+      // Start recording as a continuous monotonic stream without timeslice jitter
+      mediaRecorder.start();
       isRecording = true;
       recordBtn.classList.add('recording');
       recordBtnText.innerText = 'Stop';
@@ -814,6 +936,9 @@
     if (helperVideo) {
       helperVideo.pause();
       helperVideo.srcObject = null;
+      if (helperVideo.isConnected) {
+        helperVideo.remove();
+      }
     }
   }
 
