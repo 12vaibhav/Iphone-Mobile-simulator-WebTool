@@ -3,22 +3,24 @@ import socketserver
 import urllib.request
 import urllib.parse
 import re
-import sys
 
 PORT = 8080
 
-# Headers that closely mimic a real mobile browser — critical for font CDNs
-# that validate Referer/Origin or require Accept-Encoding to serve woff2.
+# ---------------------------------------------------------------------------
+# Request headers — mimic real mobile Safari so CDNs don't block resources.
+# IMPORTANT: Do NOT include 'br' in Accept-Encoding — Python's urllib cannot
+# decompress brotli natively, which would cause garbled CSS/HTML responses
+# and break all URL rewriting.
+# ---------------------------------------------------------------------------
 def build_request_headers(target_url, resource_type='html'):
     parsed = urllib.parse.urlparse(target_url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
 
-    if resource_type == 'font':
-        accept = '*/*'
-    elif resource_type == 'css':
-        accept = 'text/css,*/*;q=0.1'
-    else:
-        accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    accept_map = {
+        'font': '*/*',
+        'css':  'text/css,*/*;q=0.1',
+        'html': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
 
     return {
         'User-Agent': (
@@ -26,145 +28,173 @@ def build_request_headers(target_url, resource_type='html'):
             'AppleWebKit/605.1.15 (KHTML, like Gecko) '
             'Version/17.0 Mobile/15E148 Safari/604.1'
         ),
-        'Accept': accept,
+        'Accept':          accept_map.get(resource_type, accept_map['html']),
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': origin + '/',
-        'Origin': origin,
-        'Sec-Fetch-Dest': 'font' if resource_type == 'font' else ('style' if resource_type == 'css' else 'document'),
-        'Sec-Fetch-Mode': 'cors' if resource_type in ('font', 'css') else 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
+        # gzip + deflate only — no 'br' (brotli) since urllib can't decompress it
+        'Accept-Encoding': 'gzip, deflate',
+        'Referer':         origin + '/',
+        'Origin':          origin,
+        'Sec-Fetch-Dest':  'font' if resource_type == 'font' else ('style' if resource_type == 'css' else 'document'),
+        'Sec-Fetch-Mode':  'cors' if resource_type in ('font', 'css') else 'navigate',
+        'Sec-Fetch-Site':  'same-origin',
     }
 
 
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
 def make_proxy_url(asset_url):
-    """Return a /proxy?url=... URL for any absolute asset URL."""
+    """Return a /proxy?url=... path for any absolute asset URL."""
     return f'/proxy?url={urllib.parse.quote(asset_url, safe="")}'
 
 
-def rewrite_font_faces_in_css(css_text, base_url):
+def resolve_to_absolute(raw, base_url):
     """
-    Rewrite all url(...) references inside @font-face blocks so they route
-    through this proxy.  Handles both absolute and root-relative paths.
+    Resolve a raw URL string (relative, root-relative, protocol-relative,
+    or absolute) against base_url.  Returns None for URLs that must NOT
+    be proxied (data URIs, already-proxied, anchors, etc.).
     """
+    raw = raw.strip()
+    if (not raw
+            or raw.startswith('data:')
+            or raw.startswith('/proxy?')
+            or raw.startswith('#')
+            or raw.startswith('about:')):
+        return None
+
     parsed_base = urllib.parse.urlparse(base_url)
-    base_origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+    base_origin  = f"{parsed_base.scheme}://{parsed_base.netloc}"
 
+    if raw.startswith('//'):
+        return parsed_base.scheme + ':' + raw
+    elif raw.startswith('/'):
+        return base_origin + raw
+    elif raw.startswith('http://') or raw.startswith('https://'):
+        return raw
+    else:
+        return urllib.parse.urljoin(base_url, raw)
+
+
+# ---------------------------------------------------------------------------
+# CSS rewriting — rewrites ALL url() and @import references
+# ---------------------------------------------------------------------------
+def rewrite_css_urls(css_text, base_url):
+    """
+    Rewrite every url(...) and @import statement in CSS so that assets
+    (fonts, background images, sprites, icon sets …) are fetched through
+    the proxy.  This fixes both font loading AND background-image loading.
+    """
     def replace_url(m):
-        # Group 1 = optional quote char, Group 2 = the raw URL value
         quote = m.group(1)
-        raw = m.group(2).strip()
-
-        # Skip data-URIs and already-proxied URLs
-        if raw.startswith('data:') or raw.startswith('/proxy?'):
+        raw   = m.group(2)
+        abs_url = resolve_to_absolute(raw, base_url)
+        if abs_url is None:
             return m.group(0)
+        return f'url({quote}{make_proxy_url(abs_url)}{quote})'
 
-        # Build absolute URL
-        if raw.startswith('//'):
-            abs_url = parsed_base.scheme + ':' + raw
-        elif raw.startswith('/'):
-            abs_url = base_origin + raw
-        elif raw.startswith('http://') or raw.startswith('https://'):
-            abs_url = raw
-        else:
-            # Relative path — resolve against the base URL
-            abs_url = urllib.parse.urljoin(base_url, raw)
+    # url("..."), url('...'), url(...)
+    css_text = re.sub(r'url\((["\']?)([^)"\'\s]+)\1\)', replace_url, css_text)
 
-        proxied = make_proxy_url(abs_url)
-        return f'url({quote}{proxied}{quote})'
+    # @import "..." and @import '...' (without the url() wrapper)
+    def replace_import(m):
+        quote   = m.group(1)
+        raw     = m.group(2)
+        abs_url = resolve_to_absolute(raw, base_url)
+        if abs_url is None:
+            return m.group(0)
+        return f'@import {quote}{make_proxy_url(abs_url)}{quote}'
 
-    # Match url("..."), url('...'), url(...)
-    css_text = re.sub(
-        r'url\((["\']?)([^)"\'\s]+)\1\)',
-        replace_url,
-        css_text
-    )
+    css_text = re.sub(r'@import\s+(["\'])([^"\']+)\1', replace_import, css_text)
+
     return css_text
 
 
-def rewrite_inline_styles_in_html(html_text, base_url):
+# ---------------------------------------------------------------------------
+# HTML rewriting helpers
+# ---------------------------------------------------------------------------
+def rewrite_style_tags(html_text, base_url):
     """
-    Find every <style>...</style> block in the HTML and rewrite font-face
-    src URLs inside them so they route through the proxy.
+    Rewrite url() inside every <style>...</style> block.
+    Preserves the original <style ...> tag attributes.
     """
-    def replace_style_block(m):
-        css = m.group(1)
-        css = rewrite_font_faces_in_css(css, base_url)
-        return f'<style>{css}</style>'
+    def replace_block(m):
+        open_tag = m.group(1)   # e.g. <style type="text/css">
+        css      = m.group(2)
+        css      = rewrite_css_urls(css, base_url)
+        return f'{open_tag}{css}</style>'
 
-    html_text = re.sub(
-        r'<style[^>]*>(.*?)</style>',
-        replace_style_block,
+    return re.sub(
+        r'(<style[^>]*>)([\s\S]*?)</style>',
+        replace_block,
         html_text,
-        flags=re.DOTALL | re.IGNORECASE
+        flags=re.IGNORECASE
     )
+
+
+def rewrite_style_attributes(html_text, base_url):
+    """
+    Rewrite url() inside inline style="..." attributes.
+    This fixes background-image, background, list-style-image, etc. set
+    directly on HTML elements — <base href> does NOT fix these.
+    """
+    def replace_dq(m):
+        return f'style="{rewrite_css_urls(m.group(1), base_url)}"'
+
+    def replace_sq(m):
+        return f"style='{rewrite_css_urls(m.group(1), base_url)}'"
+
+    html_text = re.sub(r'style="([^"]*)"', replace_dq, html_text, flags=re.IGNORECASE)
+    html_text = re.sub(r"style='([^']*)'", replace_sq, html_text, flags=re.IGNORECASE)
     return html_text
 
 
-def rewrite_link_stylesheets_in_html(html_text, base_url):
+def rewrite_link_tags(html_text, base_url):
     """
-    Rewrite <link rel="stylesheet" href="..."> so external CSS files are
-    also fetched through the proxy (which will then rewrite their font URLs).
+    Proxy <link> tags that are either:
+      - rel="stylesheet"  (CSS files — so their @font-face & background urls get rewritten)
+      - rel="preload" as="font"  (font preload hints that would bypass the proxy)
+    Also removes <link rel="preconnect"> to font CDNs since those connections
+    bypass the proxy and cause browsers to fetch fonts directly.
     """
-    parsed_base = urllib.parse.urlparse(base_url)
-    base_origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
-
     def replace_link(m):
-        full_tag = m.group(0)
-        href_match = re.search(r'href=["\']([^"\']+)["\']', full_tag, re.IGNORECASE)
-        if not href_match:
-            return full_tag
-        raw = href_match.group(1).strip()
+        tag = m.group(0)
 
-        if raw.startswith('data:') or raw.startswith('/proxy?'):
-            return full_tag
+        # Remove preconnect hints — they make the browser connect directly
+        if re.search(r'rel=["\']preconnect["\']', tag, re.IGNORECASE):
+            return ''
 
-        if raw.startswith('//'):
-            abs_url = parsed_base.scheme + ':' + raw
-        elif raw.startswith('/'):
-            abs_url = base_origin + raw
-        elif raw.startswith('http://') or raw.startswith('https://'):
-            abs_url = raw
-        else:
-            abs_url = urllib.parse.urljoin(base_url, raw)
+        is_stylesheet   = bool(re.search(r'rel=["\'][^"\']*stylesheet[^"\']*["\']', tag, re.IGNORECASE))
+        is_font_preload = (
+            bool(re.search(r'rel=["\'][^"\']*preload[^"\']*["\']', tag, re.IGNORECASE)) and
+            bool(re.search(r'as=["\']font["\']', tag, re.IGNORECASE))
+        )
 
-        proxied = make_proxy_url(abs_url)
-        new_tag = full_tag.replace(href_match.group(1), proxied)
+        if not is_stylesheet and not is_font_preload:
+            return tag
+
+        href_m = re.search(r'href=(["\'])([^"\']+)\1', tag, re.IGNORECASE)
+        if not href_m:
+            return tag
+
+        raw     = href_m.group(2)
+        abs_url = resolve_to_absolute(raw, base_url)
+        if abs_url is None:
+            return tag
+
+        # Replace just the href value, keep everything else intact
+        new_tag = tag[:href_m.start(2)] + make_proxy_url(abs_url) + tag[href_m.end(2):]
         return new_tag
 
-    html_text = re.sub(
-        r'<link[^>]+rel=["\']stylesheet["\'][^>]*>',
-        replace_link,
-        html_text,
-        flags=re.IGNORECASE
-    )
-    # Also handle <link href="..." rel="stylesheet"> (href before rel)
-    html_text = re.sub(
-        r'<link[^>]+href=["\'][^"\']+["\'][^>]*rel=["\']stylesheet["\'][^>]*>',
-        replace_link,
-        html_text,
-        flags=re.IGNORECASE
-    )
-    return html_text
+    return re.sub(r'<link[^>]+>', replace_link, html_text, flags=re.IGNORECASE)
 
 
-# Headers to strip from proxied responses that break iframe / font loading
-BLOCKED_RESPONSE_HEADERS = {
-    'x-frame-options',
-    'content-security-policy',
-    'content-security-policy-report-only',
-    'x-content-security-policy',
-    'x-webkit-csp',
-    'cross-origin-opener-policy',
-    'cross-origin-embedder-policy',
-    'cross-origin-resource-policy',
-}
-
-
+# ---------------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------------
 class SimulatorServer(http.server.SimpleHTTPRequestHandler):
+
     def end_headers(self):
-        # Allow cross-origin embedding & framing
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Origin',  '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
         super().end_headers()
@@ -175,50 +205,58 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == '/proxy':
-            query = urllib.parse.parse_qs(parsed.query)
-            target_url = query.get('url', [None])[0]
-            if not target_url:
-                self.send_error(400, "Missing 'url' parameter")
-                return
 
-            if not target_url.startswith(('http://', 'https://')):
-                target_url = 'https://' + target_url
+        if parsed.path != '/proxy':
+            super().do_GET()
+            return
 
-            try:
-                # Detect resource type for smarter headers
-                low = target_url.lower().split('?')[0]
-                if any(low.endswith(ext) for ext in ('.woff', '.woff2', '.ttf', '.otf', '.eot')):
-                    resource_type = 'font'
-                elif low.endswith('.css'):
-                    resource_type = 'css'
-                else:
-                    resource_type = 'html'
+        query      = urllib.parse.parse_qs(parsed.query)
+        target_url = query.get('url', [None])[0]
 
-                req = urllib.request.Request(
-                    target_url,
-                    headers=build_request_headers(target_url, resource_type)
-                )
+        if not target_url:
+            self.send_error(400, "Missing 'url' parameter")
+            return
 
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    final_url = resp.geturl()
-                    data = resp.read()
-                    content_type = resp.headers.get('Content-Type', 'text/html; charset=utf-8')
+        if not target_url.startswith(('http://', 'https://')):
+            target_url = 'https://' + target_url
 
-                    # ---- Rewrite HTML ----
-                    if 'text/html' in content_type.lower():
-                        try:
-                            encoding = resp.headers.get_content_charset() or 'utf-8'
-                            html_text = data.decode(encoding, errors='replace')
+        try:
+            # Detect resource type by extension for better request headers
+            low = target_url.lower().split('?')[0]
+            if any(low.endswith(ext) for ext in ('.woff', '.woff2', '.ttf', '.otf', '.eot')):
+                resource_type = 'font'
+            elif low.endswith('.css'):
+                resource_type = 'css'
+            else:
+                resource_type = 'html'
 
-                            # 1. Rewrite <link rel="stylesheet"> hrefs through proxy
-                            html_text = rewrite_link_stylesheets_in_html(html_text, final_url)
+            req = urllib.request.Request(
+                target_url,
+                headers=build_request_headers(target_url, resource_type)
+            )
 
-                            # 2. Rewrite font-face src URLs in inline <style> blocks
-                            html_text = rewrite_inline_styles_in_html(html_text, final_url)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                final_url    = resp.geturl()
+                data         = resp.read()
+                content_type = resp.headers.get('Content-Type', 'text/html; charset=utf-8')
 
-                            # 3. Inject simulator utilities after <head>
-                            injection = f'''
+                # ---- HTML: rewrite links, styles, inline style attrs ----
+                if 'text/html' in content_type.lower():
+                    try:
+                        encoding  = resp.headers.get_content_charset() or 'utf-8'
+                        html_text = data.decode(encoding, errors='replace')
+
+                        # 1. Proxy <link rel="stylesheet"> and font preload hrefs
+                        html_text = rewrite_link_tags(html_text, final_url)
+
+                        # 2. Rewrite url() inside <style> blocks (fonts + bg images)
+                        html_text = rewrite_style_tags(html_text, final_url)
+
+                        # 3. Rewrite url() inside style="..." attributes (bg images)
+                        html_text = rewrite_style_attributes(html_text, final_url)
+
+                        # 4. Inject simulator utilities
+                        injection = f'''
 <base href="{final_url}">
 <style id="simulator-mobile-styles">
   * {{ cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto !important; }}
@@ -252,44 +290,46 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
   }}, true);
 </script>
 '''
-                            if '<head>' in html_text.lower():
-                                html_text = re.sub(r'(<head[^>]*>)', r'\1' + injection, html_text, count=1, flags=re.IGNORECASE)
-                            else:
-                                html_text = injection + html_text
+                        if '<head' in html_text.lower():
+                            html_text = re.sub(
+                                r'(<head[^>]*>)', r'\1' + injection,
+                                html_text, count=1, flags=re.IGNORECASE
+                            )
+                        else:
+                            html_text = injection + html_text
 
-                            data = html_text.encode(encoding, errors='replace')
-                        except Exception as e:
-                            pass  # fallback to raw bytes if decoding fails
+                        data = html_text.encode(encoding, errors='replace')
+                    except Exception:
+                        pass  # fallback to raw bytes
 
-                    # ---- Rewrite CSS files (@font-face src URLs) ----
-                    elif 'text/css' in content_type.lower():
-                        try:
-                            encoding = resp.headers.get_content_charset() or 'utf-8'
-                            css_text = data.decode(encoding, errors='replace')
-                            css_text = rewrite_font_faces_in_css(css_text, final_url)
-                            data = css_text.encode(encoding, errors='replace')
-                        except Exception:
-                            pass
+                # ---- CSS: rewrite ALL url() and @import refs ----
+                elif 'text/css' in content_type.lower():
+                    try:
+                        encoding  = resp.headers.get_content_charset() or 'utf-8'
+                        css_text  = data.decode(encoding, errors='replace')
+                        css_text  = rewrite_css_urls(css_text, final_url)
+                        data      = css_text.encode(encoding, errors='replace')
+                    except Exception:
+                        pass
 
-                    self.send_response(200)
-                    self.send_header('Content-Type', content_type)
-                    self.send_header('Content-Length', str(len(data)))
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-                    self.send_header('Access-Control-Allow-Headers', '*')
-                    # Allow cross-origin font loading
-                    self.send_header('Cross-Origin-Resource-Policy', 'cross-origin')
-                    self.end_headers()
-                    self.wfile.write(data)
+                # ---- Fonts / images / other binaries: pass straight through ----
 
-            except Exception as err:
-                self.send_error(502, f"Proxy error loading {target_url}: {err}")
-        else:
-            # Serve local static files
-            super().do_GET()
+                self.send_response(200)
+                self.send_header('Content-Type',                   content_type)
+                self.send_header('Content-Length',                 str(len(data)))
+                self.send_header('Access-Control-Allow-Origin',    '*')
+                self.send_header('Access-Control-Allow-Methods',   'GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers',   '*')
+                self.send_header('Cross-Origin-Resource-Policy',   'cross-origin')
+                self.send_header('Timing-Allow-Origin',            '*')
+                self.end_headers()
+                self.wfile.write(data)
+
+        except Exception as err:
+            self.send_error(502, f"Proxy error loading {target_url}: {err}")
 
     def log_message(self, format, *args):
-        # Suppress noisy access logs; only print errors
+        # Only log errors (4xx / 5xx) to keep the console clean
         if args and len(args) >= 2 and str(args[1]).startswith(('4', '5')):
             super().log_message(format, *args)
 
@@ -303,4 +343,3 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             print("\nShutting down server.")
             httpd.server_close()
-

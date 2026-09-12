@@ -1,11 +1,43 @@
-// Helper: build rich browser-like headers so font CDNs don't block requests
+// ---------------------------------------------------------------------------
+// URL helpers
+// ---------------------------------------------------------------------------
+
+/** Build an /api/proxy?url=... path for a given absolute asset URL. */
+function makeProxyUrl(absUrl) {
+  return `/api/proxy?url=${encodeURIComponent(absUrl)}`;
+}
+
+/**
+ * Resolve a raw URL (relative, root-relative, protocol-relative, or absolute)
+ * against baseUrl.  Returns null for URLs that must NOT be proxied.
+ */
+function resolveToAbsolute(raw, baseUrl) {
+  raw = raw.trim();
+  if (!raw || raw.startsWith('data:') || raw.startsWith('/api/proxy?') ||
+      raw.startsWith('#') || raw.startsWith('about:')) {
+    return null;
+  }
+  try {
+    const base = new URL(baseUrl);
+    if (raw.startsWith('//')) return base.protocol + raw;
+    if (raw.startsWith('/'))  return base.origin + raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return new URL(raw, baseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Request headers — mimic real mobile Safari so CDNs serve the right assets.
+// ---------------------------------------------------------------------------
 function buildHeaders(targetUrl, resourceType = 'html') {
-  const parsed = new URL(targetUrl);
-  const origin = `${parsed.protocol}//${parsed.hostname}`;
+  let origin;
+  try { origin = new URL(targetUrl).origin; } catch { origin = ''; }
 
   const acceptMap = {
     font: '*/*',
-    css: 'text/css,*/*;q=0.1',
+    css:  'text/css,*/*;q=0.1',
     html: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   };
 
@@ -14,120 +46,160 @@ function buildHeaders(targetUrl, resourceType = 'html') {
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ' +
       'AppleWebKit/605.1.15 (KHTML, like Gecko) ' +
       'Version/17.0 Mobile/15E148 Safari/604.1',
-    Accept: acceptMap[resourceType] || acceptMap.html,
+    'Accept':          acceptMap[resourceType] || acceptMap.html,
     'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    Referer: origin + '/',
-    Origin: origin,
+    'Accept-Encoding': 'gzip, deflate, br',   // Node fetch handles brotli fine
+    'Referer':         origin + '/',
+    'Origin':          origin,
     'Sec-Fetch-Dest':
       resourceType === 'font' ? 'font' : resourceType === 'css' ? 'style' : 'document',
-    'Sec-Fetch-Mode': resourceType === 'font' || resourceType === 'css' ? 'cors' : 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-Mode':  (resourceType === 'font' || resourceType === 'css') ? 'cors' : 'navigate',
+    'Sec-Fetch-Site':  'same-origin',
   };
 }
 
-// Helper: build a /api/proxy?url=... path for a given absolute URL
-function makeProxyUrl(absUrl) {
-  return `/api/proxy?url=${encodeURIComponent(absUrl)}`;
-}
+// ---------------------------------------------------------------------------
+// CSS rewriting — rewrites ALL url() and @import references
+// ---------------------------------------------------------------------------
 
-// Rewrite url(...) references in CSS so fonts route through the proxy
-function rewriteUrlsInCss(cssText, baseUrl) {
-  const parsed = new URL(baseUrl);
-  const baseOrigin = `${parsed.protocol}//${parsed.hostname}`;
-
-  return cssText.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, (match, quote, raw) => {
-    if (raw.startsWith('data:') || raw.startsWith('/api/proxy?')) return match;
-
-    let absUrl;
-    if (raw.startsWith('//')) absUrl = parsed.protocol + raw;
-    else if (raw.startsWith('/')) absUrl = baseOrigin + raw;
-    else if (/^https?:\/\//i.test(raw)) absUrl = raw;
-    else absUrl = new URL(raw, baseUrl).href;
-
-    return `url(${quote}${makeProxyUrl(absUrl)}${quote})`;
+/**
+ * Rewrite every url(...) and @import statement in CSS so that ALL assets
+ * (fonts, background images, sprites, icon sets …) load through the proxy.
+ * This is the single most important fix — <base href> does NOT affect CSS url().
+ */
+function rewriteCssUrls(cssText, baseUrl) {
+  // url("..."), url('...'), url(...)
+  cssText = cssText.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, (match, quote, raw) => {
+    const abs = resolveToAbsolute(raw, baseUrl);
+    if (!abs) return match;
+    return `url(${quote}${makeProxyUrl(abs)}${quote})`;
   });
-}
 
-// Rewrite <style> blocks in HTML so @font-face URLs go through the proxy
-function rewriteInlineStyles(htmlText, baseUrl) {
-  return htmlText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, css) => {
-    return `<style>${rewriteUrlsInCss(css, baseUrl)}</style>`;
+  // @import "..." and @import '...' (without url() wrapper — common in Google Fonts CSS)
+  cssText = cssText.replace(/@import\s+(['"])([^'"]+)\1/g, (match, quote, raw) => {
+    const abs = resolveToAbsolute(raw, baseUrl);
+    if (!abs) return match;
+    return `@import ${quote}${makeProxyUrl(abs)}${quote}`;
   });
+
+  return cssText;
 }
 
-// Rewrite <link rel="stylesheet"> hrefs so CSS is fetched through the proxy
-function rewriteStylesheetLinks(htmlText, baseUrl) {
-  const parsed = new URL(baseUrl);
-  const baseOrigin = `${parsed.protocol}//${parsed.hostname}`;
+// ---------------------------------------------------------------------------
+// HTML rewriting helpers
+// ---------------------------------------------------------------------------
 
+/**
+ * Rewrite url() inside every <style>...</style> block.
+ * Preserves original <style> tag attributes (type, scoped, etc.).
+ */
+function rewriteStyleTags(htmlText, baseUrl) {
+  return htmlText.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (match, openTag, css, closeTag) =>
+      `${openTag}${rewriteCssUrls(css, baseUrl)}${closeTag}`
+  );
+}
+
+/**
+ * Rewrite url() inside inline style="..." attributes on HTML elements.
+ * Fixes background-image, background, list-style-image, mask-image, etc.
+ * <base href> does NOT fix these — browsers resolve CSS urls against the
+ * CSS file/document location, NOT the <base> tag.
+ */
+function rewriteStyleAttributes(htmlText, baseUrl) {
+  // Double-quoted style attributes
+  htmlText = htmlText.replace(/style="([^"]*)"/gi,
+    (match, val) => `style="${rewriteCssUrls(val, baseUrl)}"`
+  );
+  // Single-quoted style attributes
+  htmlText = htmlText.replace(/style='([^']*)'/gi,
+    (match, val) => `style='${rewriteCssUrls(val, baseUrl)}'`
+  );
+  return htmlText;
+}
+
+/**
+ * Proxy <link> tags that are:
+ *   - rel="stylesheet"        → must go through proxy so their CSS gets rewritten
+ *   - rel="preload" as="font" → font preload hints that would bypass the proxy
+ * Also removes <link rel="preconnect"> hints — these make the browser open
+ * direct connections to font CDNs, causing fonts to load cross-origin without
+ * our CORS headers.
+ */
+function rewriteLinkTags(htmlText, baseUrl) {
   return htmlText.replace(/<link[^>]+>/gi, (tag) => {
-    if (!/rel=["']stylesheet["']/i.test(tag) && !/rel=["'][^"']*stylesheet[^"']*["']/i.test(tag)) {
-      return tag;
-    }
-    const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+    // Drop preconnect hints entirely
+    if (/rel=['"]preconnect['"]/i.test(tag)) return '';
+
+    const isStylesheet   = /rel=['"][^'"]*stylesheet[^'"]*['"]/i.test(tag);
+    const isFontPreload  = /rel=['"][^'"]*preload[^'"]*['"]/i.test(tag) &&
+                           /as=['"]font['"]/i.test(tag);
+
+    if (!isStylesheet && !isFontPreload) return tag;
+
+    const hrefMatch = tag.match(/href=(['"])([^'"]+)\1/i);
     if (!hrefMatch) return tag;
 
-    const raw = hrefMatch[1];
-    if (raw.startsWith('data:') || raw.startsWith('/api/proxy?')) return tag;
+    const abs = resolveToAbsolute(hrefMatch[2], baseUrl);
+    if (!abs) return tag;
 
-    let absUrl;
-    if (raw.startsWith('//')) absUrl = parsed.protocol + raw;
-    else if (raw.startsWith('/')) absUrl = baseOrigin + raw;
-    else if (/^https?:\/\//i.test(raw)) absUrl = raw;
-    else absUrl = new URL(raw, baseUrl).href;
-
-    return tag.replace(hrefMatch[1], makeProxyUrl(absUrl));
+    // Replace only the href value, keep all other attributes intact
+    return tag.slice(0, hrefMatch.index + 6) +          // 'href=' prefix
+           hrefMatch[1] + makeProxyUrl(abs) + hrefMatch[1] +
+           tag.slice(hrefMatch.index + hrefMatch[0].length);
   });
 }
 
+// ---------------------------------------------------------------------------
+// Vercel serverless handler
+// ---------------------------------------------------------------------------
 export default async function handler(req, res) {
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS + CORP headers on every response
+  res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Timing-Allow-Origin',          '*');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   const targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send('Missing "url" parameter');
-  }
+  if (!targetUrl) return res.status(400).send('Missing "url" parameter');
 
   let finalTarget = targetUrl;
-  if (!/^https?:\/\//i.test(finalTarget)) {
-    finalTarget = 'https://' + finalTarget;
-  }
+  if (!/^https?:\/\//i.test(finalTarget)) finalTarget = 'https://' + finalTarget;
 
   try {
-    // Detect resource type for smarter headers
+    // Detect resource type by file extension for smarter request headers.
+    // Note: Google Fonts URLs end in e.g. /css2?family=... — no .css extension,
+    // but their Content-Type response is text/css, so rewriting still applies.
     const lowPath = finalTarget.toLowerCase().split('?')[0];
     let resourceType = 'html';
-    if (/\.(woff2?|ttf|otf|eot)$/.test(lowPath)) resourceType = 'font';
-    else if (lowPath.endsWith('.css')) resourceType = 'css';
+    if (/\.(woff2?|ttf|otf|eot)(\?|$)/.test(lowPath)) resourceType = 'font';
+    else if (lowPath.endsWith('.css'))                  resourceType = 'css';
 
     const response = await fetch(finalTarget, {
-      headers: buildHeaders(finalTarget, resourceType),
+      headers:  buildHeaders(finalTarget, resourceType),
       redirect: 'follow',
     });
 
     const contentType = response.headers.get('content-type') || 'text/html';
-    const finalUrl = response.url || finalTarget;
+    const finalUrl    = response.url || finalTarget;
 
-    // ---- Rewrite HTML ----
+    // ---- HTML ----
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
 
-      // 1. Rewrite stylesheet <link> hrefs through the proxy
-      htmlText = rewriteStylesheetLinks(htmlText, finalUrl);
+      // 1. Proxy <link rel="stylesheet"> and font preload hrefs
+      htmlText = rewriteLinkTags(htmlText, finalUrl);
 
-      // 2. Rewrite @font-face URLs in inline <style> blocks
-      htmlText = rewriteInlineStyles(htmlText, finalUrl);
+      // 2. Rewrite url() inside <style> blocks (covers fonts + background images)
+      htmlText = rewriteStyleTags(htmlText, finalUrl);
 
-      // 3. Inject simulator utilities
+      // 3. Rewrite url() inside inline style="..." attributes (background images)
+      htmlText = rewriteStyleAttributes(htmlText, finalUrl);
+
+      // 4. Inject simulator utilities
       const injection = `
 <base href="${finalUrl}">
 <style id="simulator-mobile-styles">
@@ -150,9 +222,7 @@ export default async function handler(req, res) {
       } else {
         try {
           const targetEl = document.querySelector(hash) || document.getElementById(hash.substring(1));
-          if (targetEl) {
-            targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
+          if (targetEl) targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (err) {
           const idEl = document.getElementById(hash.substring(1));
           if (idEl) idEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -162,7 +232,6 @@ export default async function handler(req, res) {
   }, true);
 </script>
 `;
-
       if (/<head[^>]*>/i.test(htmlText)) {
         htmlText = htmlText.replace(/(<head[^>]*>)/i, `$1${injection}`);
       } else {
@@ -172,14 +241,14 @@ export default async function handler(req, res) {
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(htmlText);
 
-    // ---- Rewrite CSS (@font-face src URLs) ----
+    // ---- CSS: rewrite ALL url() and @import refs ----
     } else if (contentType.includes('text/css')) {
       let cssText = await response.text();
-      cssText = rewriteUrlsInCss(cssText, finalUrl);
+      cssText = rewriteCssUrls(cssText, finalUrl);
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(cssText);
 
-    // ---- Pass-through for fonts & other binary assets ----
+    // ---- Fonts / images / other binaries: pass straight through ----
     } else {
       const buffer = await response.arrayBuffer();
       res.setHeader('Content-Type', contentType);
