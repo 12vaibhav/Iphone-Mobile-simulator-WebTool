@@ -58,6 +58,8 @@
   const recordedVideoPlayer = document.getElementById('recordedVideoPlayer');
   const videoDurationInfo = document.getElementById('videoDurationInfo');
   const downloadRecordBtn = document.getElementById('downloadRecordBtn');
+  const downloadBtnLabel = document.getElementById('downloadBtnLabel');
+  const videoFormatBadge = document.getElementById('videoFormatBadge');
   const discardRecordBtn = document.getElementById('discardRecordBtn');
   const closeModalBtn = document.getElementById('closeModalBtn');
 
@@ -624,8 +626,9 @@
 
         if (sWidth > 10 && sHeight > 10) {
           const isLandscapeMode = deviceWrapper.classList.contains('landscape');
-          const targetW = isLandscapeMode ? 1920 : 880;
-          const targetH = isLandscapeMode ? 880 : 1920;
+          // 1080p High-DPI Output (1080 width in portrait; 1920 width in landscape)
+          const targetW = isLandscapeMode ? 1920 : 1080;
+          const targetH = isLandscapeMode ? 940 : 2206;
 
           if (cropCanvas.width !== targetW || cropCanvas.height !== targetH) {
             cropCanvas.width = targetW;
@@ -651,13 +654,13 @@
     try {
       updateCachedRect();
 
-      // Request screen stream with tab audio
+      // Request screen stream with 1080p Full HD resolution at 30 FPS
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
           width: { ideal: 1920, max: 2560 },
           height: { ideal: 1080, max: 1440 },
-          frameRate: { ideal: 60, max: 60 }
+          frameRate: { ideal: 30, max: 30 }
         },
         audio: true,
         preferCurrentTab: true
@@ -666,7 +669,7 @@
       isNativeCropActive = false;
       let finalStreamToRecord = rawDisplayStream;
 
-      // 1. Try Native Hardware Region Capture (CropTarget API - 0% CPU overhead, 100% smooth scrolling)
+      // 1. Try Native Hardware Region Capture (CropTarget API - 0% CPU overhead)
       if (window.CropTarget && typeof CropTarget.fromElement === 'function') {
         try {
           const cropTarget = await CropTarget.fromElement(deviceWrapper);
@@ -677,11 +680,11 @@
             finalStreamToRecord = rawDisplayStream;
           }
         } catch (cropErr) {
-          console.log('Region capture fallback to optimized canvas:', cropErr);
+          console.log('Region capture fallback to 1080p canvas:', cropErr);
         }
       }
 
-      // 2. Optimized Canvas Fallback if native CropTarget is unsupported
+      // 2. 1080p Canvas Fallback if native CropTarget is unsupported
       if (!isNativeCropActive) {
         if (!helperVideo) {
           helperVideo = document.createElement('video');
@@ -698,29 +701,32 @@
         }
 
         const isLandscapeMode = deviceWrapper.classList.contains('landscape');
-        cropCanvas.width = isLandscapeMode ? 1920 : 880;
-        cropCanvas.height = isLandscapeMode ? 880 : 1920;
+        cropCanvas.width = isLandscapeMode ? 1920 : 1080;
+        cropCanvas.height = isLandscapeMode ? 940 : 2206;
 
         renderCroppedDeviceLoop();
 
-        croppedStream = cropCanvas.captureStream(60);
+        croppedStream = cropCanvas.captureStream(30); // 30 FPS
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
         finalStreamToRecord = croppedStream;
       }
 
-      // MIME Type Selection
+      // MIME Type Selection: Prioritize MP4 (H.264/AVC) for native MP4 recording
       const mimeTypes = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1',
+        'video/mp4;codecs=h264',
+        'video/mp4',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
-        'video/webm',
-        'video/mp4'
+        'video/webm'
       ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
 
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 8000000 // 8Mbps high clarity with smooth performance
+        videoBitsPerSecond: 10000000 // 10 Mbps for crisp 1080p 30FPS clarity
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -738,16 +744,22 @@
         }
         currentVideoUrl = URL.createObjectURL(finalBlob);
 
+        const isMp4 = selectedMime.includes('mp4');
+        const fileExt = isMp4 ? 'mp4' : 'webm';
+        const formatLabel = isMp4 ? '1080p 30FPS MP4' : '1080p 30FPS WebM';
+
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
         downloadRecordBtn.href = currentVideoUrl;
-        downloadRecordBtn.download = `mobile-recording-${Date.now()}.webm`;
+        downloadRecordBtn.download = `mobile-recording-1080p-${Date.now()}.${fileExt}`;
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
+        if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
+        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${isMp4 ? 'MP4' : 'WebM'}`;
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
         recordedVideoPlayer.play().catch(() => {});
-        showToast('🎬 Recording complete!');
+        showToast(`🎬 ${formatLabel} recording complete!`);
       };
 
       // Handle user ending sharing from browser system bar
