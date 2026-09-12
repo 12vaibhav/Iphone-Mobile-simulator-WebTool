@@ -703,13 +703,15 @@
     const rect = deviceWrapper.getBoundingClientRect();
     const vWidth = helperVideo.videoWidth || 1920;
     const vHeight = helperVideo.videoHeight || 1080;
-    const scaleX = vWidth / window.innerWidth;
-    const scaleY = vHeight / window.innerHeight;
+    const winWidth = window.innerWidth || 1;
+    const winHeight = window.innerHeight || 1;
+    const scaleX = vWidth / winWidth;
+    const scaleY = vHeight / winHeight;
 
-    const sx = Math.max(0, Math.round(rect.left * scaleX));
-    const sy = Math.max(0, Math.round(rect.top * scaleY));
-    const sWidth = Math.min(vWidth - sx, Math.round(rect.width * scaleX));
-    const sHeight = Math.min(vHeight - sy, Math.round(rect.height * scaleY));
+    const sx = Math.max(0, Math.min(vWidth - 10, Math.round(rect.left * scaleX)));
+    const sy = Math.max(0, Math.min(vHeight - 10, Math.round(rect.top * scaleY)));
+    const sWidth = Math.max(10, Math.min(vWidth - sx, Math.round(rect.width * scaleX)));
+    const sHeight = Math.max(10, Math.min(vHeight - sy, Math.round(rect.height * scaleY)));
 
     cropParams = {
       sx, sy,
@@ -719,39 +721,32 @@
     };
 
     if (cropCanvas) {
-      cropCanvas.width = sWidth;
-      cropCanvas.height = sHeight;
+      if (cropCanvas.width !== sWidth || cropCanvas.height !== sHeight) {
+        cropCanvas.width = sWidth;
+        cropCanvas.height = sHeight;
+      }
     }
   }
 
   function drawCroppedFrame() {
     if (!isRecording || isNativeCropActive || !helperVideo || !cropCtx || !cropParams) return;
-    // Direct 1:1 hardware blit (instantaneous, 0ms CPU load, 0 forced reflows)
-    cropCtx.drawImage(helperVideo, cropParams.sx, cropParams.sy, cropParams.sWidth, cropParams.sHeight, 0, 0, cropParams.targetW, cropParams.targetH);
+    try {
+      // Direct 1:1 hardware blit (instantaneous, 0ms CPU load, 0 forced reflows)
+      cropCtx.drawImage(helperVideo, cropParams.sx, cropParams.sy, cropParams.sWidth, cropParams.sHeight, 0, 0, cropParams.targetW, cropParams.targetH);
+    } catch (e) {}
   }
 
   function scheduleNextFrame() {
     if (!isRecording || isNativeCropActive) return;
 
-    if (helperVideo && 'requestVideoFrameCallback' in helperVideo) {
-      helperVideo.requestVideoFrameCallback((now) => {
-        if (!isRecording || isNativeCropActive) return;
-        if (now - lastDrawTime >= targetFrameInterval - 3) {
-          lastDrawTime = now;
-          drawCroppedFrame();
-        }
-        scheduleNextFrame();
-      });
-    } else {
-      cropAnimFrameId = requestAnimationFrame((timestamp) => {
-        if (!isRecording || isNativeCropActive) return;
-        if (timestamp - lastDrawTime >= targetFrameInterval - 3) {
-          lastDrawTime = timestamp;
-          drawCroppedFrame();
-        }
-        scheduleNextFrame();
-      });
-    }
+    cropAnimFrameId = requestAnimationFrame((timestamp) => {
+      if (!isRecording || isNativeCropActive) return;
+      if (timestamp - lastDrawTime >= targetFrameInterval - 3) {
+        lastDrawTime = timestamp;
+        drawCroppedFrame();
+      }
+      scheduleNextFrame();
+    });
   }
 
   async function startScreenRecording() {
@@ -803,7 +798,8 @@
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
-          helperVideo.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-9999;';
+          // Keep within layout with non-zero dimensions so Chromium NEVER suspends the decoder
+          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:320px;height:180px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;';
         }
         if (!helperVideo.isConnected) {
           document.body.appendChild(helperVideo);
@@ -811,14 +807,33 @@
         helperVideo.srcObject = rawDisplayStream;
         await helperVideo.play();
 
+        // Ensure video is actively decoding valid frames before recording starts (eliminates starting glitches!)
+        if (helperVideo.readyState < 2 || !helperVideo.videoWidth) {
+          await new Promise(resolve => {
+            const onReady = () => {
+              helperVideo.removeEventListener('loadeddata', onReady);
+              helperVideo.removeEventListener('canplay', onReady);
+              resolve();
+            };
+            helperVideo.addEventListener('loadeddata', onReady);
+            helperVideo.addEventListener('canplay', onReady);
+            setTimeout(resolve, 600);
+          });
+        }
+
         if (!cropCanvas) {
           cropCanvas = document.createElement('canvas');
           cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
         }
 
         updateCropParameters();
-        lastDrawTime = performance.now();
+
+        // Paint first clean frame immediately to guarantee 0 blank frames at the start
+        cropCtx.fillStyle = '#000000';
+        cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
         drawCroppedFrame();
+
+        lastDrawTime = performance.now();
         scheduleNextFrame();
 
         croppedStream = cropCanvas.captureStream(30); // Exactly 30 FPS stream
@@ -840,7 +855,7 @@
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 5000000 // 5 Mbps: Crisp HD 1080p without encoder lag or frame drops
+        videoBitsPerSecond: 6000000 // 6 Mbps: Crisp HD without encoder lag or frame drops
       });
 
       mediaRecorder.ondataavailable = (event) => {
