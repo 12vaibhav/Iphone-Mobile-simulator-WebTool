@@ -1,76 +1,84 @@
-function makeProxyUrl(assetUrl) {
-  return `/api/proxy?url=${encodeURIComponent(assetUrl)}`;
+// Helper: build rich browser-like headers so font CDNs don't block requests
+function buildHeaders(targetUrl, resourceType = 'html') {
+  const parsed = new URL(targetUrl);
+  const origin = `${parsed.protocol}//${parsed.hostname}`;
+
+  const acceptMap = {
+    font: '*/*',
+    css: 'text/css,*/*;q=0.1',
+    html: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+
+  return {
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ' +
+      'AppleWebKit/605.1.15 (KHTML, like Gecko) ' +
+      'Version/17.0 Mobile/15E148 Safari/604.1',
+    Accept: acceptMap[resourceType] || acceptMap.html,
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    Referer: origin + '/',
+    Origin: origin,
+    'Sec-Fetch-Dest':
+      resourceType === 'font' ? 'font' : resourceType === 'css' ? 'style' : 'document',
+    'Sec-Fetch-Mode': resourceType === 'font' || resourceType === 'css' ? 'cors' : 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+  };
 }
 
-function rewriteFontFacesInCss(cssText, baseUrl) {
-  try {
-    const parsedBase = new URL(baseUrl);
-    const baseOrigin = parsedBase.origin;
-
-    return cssText.replace(/url\((["']?)([^)"'\s]+)\1\)/gi, (match, quote, raw) => {
-      const trimmed = raw.trim();
-      if (trimmed.startsWith('data:') || trimmed.startsWith('/api/proxy') || trimmed.startsWith('/proxy')) {
-        return match;
-      }
-
-      let absUrl;
-      if (trimmed.startsWith('//')) {
-        absUrl = parsedBase.protocol + trimmed;
-      } else if (trimmed.startsWith('/')) {
-        absUrl = baseOrigin + trimmed;
-      } else if (/^https?:\/\//i.test(trimmed)) {
-        absUrl = trimmed;
-      } else {
-        absUrl = new URL(trimmed, baseUrl).href;
-      }
-
-      const proxied = makeProxyUrl(absUrl);
-      return `url(${quote}${proxied}${quote})`;
-    });
-  } catch (e) {
-    return cssText;
-  }
+// Helper: build a /api/proxy?url=... path for a given absolute URL
+function makeProxyUrl(absUrl) {
+  return `/api/proxy?url=${encodeURIComponent(absUrl)}`;
 }
 
-function rewriteInlineStylesInHtml(htmlText, baseUrl) {
-  return htmlText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, css) => {
-    const rewritten = rewriteFontFacesInCss(css, baseUrl);
-    return `<style>${rewritten}</style>`;
+// Rewrite url(...) references in CSS so fonts route through the proxy
+function rewriteUrlsInCss(cssText, baseUrl) {
+  const parsed = new URL(baseUrl);
+  const baseOrigin = `${parsed.protocol}//${parsed.hostname}`;
+
+  return cssText.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, (match, quote, raw) => {
+    if (raw.startsWith('data:') || raw.startsWith('/api/proxy?')) return match;
+
+    let absUrl;
+    if (raw.startsWith('//')) absUrl = parsed.protocol + raw;
+    else if (raw.startsWith('/')) absUrl = baseOrigin + raw;
+    else if (/^https?:\/\//i.test(raw)) absUrl = raw;
+    else absUrl = new URL(raw, baseUrl).href;
+
+    return `url(${quote}${makeProxyUrl(absUrl)}${quote})`;
   });
 }
 
-function rewriteLinkStylesheetsInHtml(htmlText, baseUrl) {
-  try {
-    const parsedBase = new URL(baseUrl);
-    const baseOrigin = parsedBase.origin;
+// Rewrite <style> blocks in HTML so @font-face URLs go through the proxy
+function rewriteInlineStyles(htmlText, baseUrl) {
+  return htmlText.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, css) => {
+    return `<style>${rewriteUrlsInCss(css, baseUrl)}</style>`;
+  });
+}
 
-    return htmlText.replace(/<link[^>]+>/gi, (match) => {
-      if (!/rel=["']stylesheet["']/i.test(match)) return match;
-      const hrefMatch = match.match(/href=["']([^"']+)["']/i);
-      if (!hrefMatch) return match;
+// Rewrite <link rel="stylesheet"> hrefs so CSS is fetched through the proxy
+function rewriteStylesheetLinks(htmlText, baseUrl) {
+  const parsed = new URL(baseUrl);
+  const baseOrigin = `${parsed.protocol}//${parsed.hostname}`;
 
-      const raw = hrefMatch[1].trim();
-      if (raw.startsWith('data:') || raw.startsWith('/api/proxy') || raw.startsWith('/proxy')) {
-        return match;
-      }
+  return htmlText.replace(/<link[^>]+>/gi, (tag) => {
+    if (!/rel=["']stylesheet["']/i.test(tag) && !/rel=["'][^"']*stylesheet[^"']*["']/i.test(tag)) {
+      return tag;
+    }
+    const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+    if (!hrefMatch) return tag;
 
-      let absUrl;
-      if (raw.startsWith('//')) {
-        absUrl = parsedBase.protocol + raw;
-      } else if (raw.startsWith('/')) {
-        absUrl = baseOrigin + raw;
-      } else if (/^https?:\/\//i.test(raw)) {
-        absUrl = raw;
-      } else {
-        absUrl = new URL(raw, baseUrl).href;
-      }
+    const raw = hrefMatch[1];
+    if (raw.startsWith('data:') || raw.startsWith('/api/proxy?')) return tag;
 
-      const proxied = makeProxyUrl(absUrl);
-      return match.replace(hrefMatch[1], proxied);
-    });
-  } catch (e) {
-    return htmlText;
-  }
+    let absUrl;
+    if (raw.startsWith('//')) absUrl = parsed.protocol + raw;
+    else if (raw.startsWith('/')) absUrl = baseOrigin + raw;
+    else if (/^https?:\/\//i.test(raw)) absUrl = raw;
+    else absUrl = new URL(raw, baseUrl).href;
+
+    return tag.replace(hrefMatch[1], makeProxyUrl(absUrl));
+  });
 }
 
 export default async function handler(req, res) {
@@ -95,46 +103,31 @@ export default async function handler(req, res) {
   }
 
   try {
-    let parsedTarget;
-    try {
-      parsedTarget = new URL(finalTarget);
-    } catch (err) {
-      return res.status(400).send('Invalid URL');
-    }
-
-    const low = parsedTarget.pathname.toLowerCase();
+    // Detect resource type for smarter headers
+    const lowPath = finalTarget.toLowerCase().split('?')[0];
     let resourceType = 'html';
-    if (/\.(woff|woff2|ttf|otf|eot)$/i.test(low)) {
-      resourceType = 'font';
-    } else if (/\.css$/i.test(low)) {
-      resourceType = 'css';
-    }
-
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-      'Accept': resourceType === 'font' ? '*/*' : (resourceType === 'css' ? 'text/css,*/*;q=0.1' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': parsedTarget.origin + '/',
-      'Origin': parsedTarget.origin,
-      'Sec-Fetch-Dest': resourceType === 'font' ? 'font' : (resourceType === 'css' ? 'style' : 'document'),
-      'Sec-Fetch-Mode': resourceType === 'html' ? 'navigate' : 'cors',
-      'Sec-Fetch-Site': 'same-origin'
-    };
+    if (/\.(woff2?|ttf|otf|eot)$/.test(lowPath)) resourceType = 'font';
+    else if (lowPath.endsWith('.css')) resourceType = 'css';
 
     const response = await fetch(finalTarget, {
-      headers,
-      redirect: 'follow'
+      headers: buildHeaders(finalTarget, resourceType),
+      redirect: 'follow',
     });
 
     const contentType = response.headers.get('content-type') || 'text/html';
     const finalUrl = response.url || finalTarget;
 
+    // ---- Rewrite HTML ----
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
 
-      htmlText = rewriteLinkStylesheetsInHtml(htmlText, finalUrl);
-      htmlText = rewriteInlineStylesInHtml(htmlText, finalUrl);
+      // 1. Rewrite stylesheet <link> hrefs through the proxy
+      htmlText = rewriteStylesheetLinks(htmlText, finalUrl);
 
+      // 2. Rewrite @font-face URLs in inline <style> blocks
+      htmlText = rewriteInlineStyles(htmlText, finalUrl);
+
+      // 3. Inject simulator utilities
       const injection = `
 <base href="${finalUrl}">
 <style id="simulator-mobile-styles">
@@ -178,16 +171,21 @@ export default async function handler(req, res) {
 
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(htmlText);
+
+    // ---- Rewrite CSS (@font-face src URLs) ----
     } else if (contentType.includes('text/css')) {
       let cssText = await response.text();
-      cssText = rewriteFontFacesInCss(cssText, finalUrl);
+      cssText = rewriteUrlsInCss(cssText, finalUrl);
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(cssText);
+
+    // ---- Pass-through for fonts & other binary assets ----
     } else {
       const buffer = await response.arrayBuffer();
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(Buffer.from(buffer));
     }
+
   } catch (error) {
     return res.status(502).send(`Proxy error loading ${finalTarget}: ${error.message}`);
   }
