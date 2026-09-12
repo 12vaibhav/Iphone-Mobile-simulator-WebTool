@@ -391,16 +391,15 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                         injection = f'''
 <base href="{final_url}">
 <style id="simulator-mobile-styles">
-  * {{ cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto !important; }}
+  html, body, button, a, input, select, textarea, label {{ cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto !important; }}
   ::-webkit-scrollbar {{ display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }}
   ::-webkit-scrollbar-track {{ background: transparent !important; }}
   ::-webkit-scrollbar-thumb {{ background: transparent !important; }}
-  html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }}
+  html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; -webkit-overflow-scrolling: touch; }}
 </style>
 <script id="simulator-font-proxy">
-/* Runtime font & asset proxy: intercepts JS-dynamically-inserted <link>/<style>,
-   inline styles, CSSStyleSheet insertRule, and FontFace constructor that bypass
-   server-side rewriting (React, Next.js, Vue chunk CSS, CSS-in-JS, Emotion). */
+/* Lightweight runtime font & asset proxy: intercepts dynamically-inserted
+   <link>/<style>, CSSStyleSheet insertRule, and FontFace without main-thread DOM lag */
 (function(){{
   var PFX = location.origin + '/proxy?url=';
 
@@ -474,60 +473,25 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
     }} catch(e) {{}}
   }}
 
-  /* Patch inline style attributes */
-  function patchElementStyle(el) {{
-    try {{
-      if (!el || !el.getAttribute) return;
-      var s = el.getAttribute('style');
-      if (s && s.indexOf('url(') > -1) {{
-        var rewritten = rewriteCssString(s);
-        if (rewritten !== s) el.setAttribute('style', rewritten);
-      }}
-    }} catch(e) {{}}
-  }}
-
-  function patchNode(n) {{
-    if (!n || n.nodeType !== 1) return;
-    var tag = n.tagName ? n.tagName.toUpperCase() : '';
-    if (tag === 'LINK') patchLink(n);
-    else if (tag === 'STYLE') patchStyle(n);
-    patchElementStyle(n);
-  }}
-
-  /* Override DOM insertion methods */
-  var _ac = Element.prototype.appendChild;
-  var _ib = Element.prototype.insertBefore;
-  var _pp = Element.prototype.prepend;
-
-  Element.prototype.appendChild = function(c) {{
-    try {{ patchNode(c); }} catch(e) {{}}
-    return _ac.call(this, c);
-  }};
-  Element.prototype.insertBefore = function(c, r) {{
-    try {{ patchNode(c); }} catch(e) {{}}
-    return _ib.call(this, c, r);
-  }};
-  Element.prototype.prepend = function() {{
-    try {{ for (var i=0; i<arguments.length; i++) patchNode(arguments[i]); }} catch(e) {{}}
-    return _pp.apply(this, arguments);
-  }};
-
-  /* MutationObserver for dynamic updates */
+  /* Fast MutationObserver for dynamic <link> and <style> tags (0 CPU overhead on animations/scrolling) */
   new MutationObserver(function(muts) {{
-    muts.forEach(function(m) {{
-      if (m.type === 'attributes' && m.attributeName === 'style') {{
-        patchElementStyle(m.target);
-      }}
-      m.addedNodes.forEach(function(n) {{
-        patchNode(n);
-        if (n.querySelectorAll) {{
-          n.querySelectorAll('link').forEach(patchLink);
-          n.querySelectorAll('style').forEach(patchStyle);
-          n.querySelectorAll('[style*="url("]').forEach(patchElementStyle);
+    for (var i = 0; i < muts.length; i++) {{
+      var nodes = muts[i].addedNodes;
+      for (var j = 0; j < nodes.length; j++) {{
+        var n = nodes[j];
+        if (!n || n.nodeType !== 1) continue;
+        var tag = n.tagName;
+        if (tag === 'LINK') patchLink(n);
+        else if (tag === 'STYLE') patchStyle(n);
+        else if (n.getElementsByTagName) {{
+          var links = n.getElementsByTagName('link');
+          for (var k = 0; k < links.length; k++) patchLink(links[k]);
+          var styles = n.getElementsByTagName('style');
+          for (var l = 0; l < styles.length; l++) patchStyle(styles[l]);
         }}
-      }});
-    }});
-  }}).observe(document.documentElement, {{ childList: true, subtree: true, attributes: true, attributeFilter: ['style'] }});
+      }}
+    }}
+  }}).observe(document.documentElement, {{ childList: true, subtree: true }});
 }})();
 </script>
 <script id="simulator-anchor-fix">
@@ -561,17 +525,16 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
   }}, true);
 </script>
 '''
+                        # Inject after <head> or at top of html
                         if '<head' in html_text.lower():
-                            html_text = re.sub(
-                                r'(<head[^>]*>)',
-                                lambda m: m.group(1) + injection,
-                                html_text, count=1, flags=re.IGNORECASE
-                            )
+                            html_text = re.sub(r'(<head[^>]*>)', lambda m: m.group(1) + injection, html_text, count=1, flags=re.IGNORECASE)
                         else:
                             html_text = injection + html_text
 
-                        data = html_text.encode(encoding, errors='replace')
-                    except Exception:
+                        data = html_text.encode('utf-8', errors='replace')
+                        content_type = 'text/html; charset=utf-8'
+
+                    except Exception as html_err:
                         pass
 
                 # ---- CSS: rewrite ALL url() and @import refs ----
@@ -584,10 +547,12 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                     except Exception:
                         pass
 
-                # ---- Return response with CORS & CORP headers ----
+                # ---- Return response with CORS, CORP & Cache-Control headers ----
                 self.send_response(200)
                 self.send_header('Content-Type', content_type)
                 self.send_header('Content-Length', str(len(data)))
+                if resource_type in ('font', 'css', 'image') or any(final_url.lower().split('?')[0].endswith(ext) for ext in ('.js', '.css', '.woff', '.woff2', '.ttf', '.png', '.jpg', '.jpeg', '.webp', '.svg')):
+                    self.send_header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
                 self.send_header('Access-Control-Allow-Headers', '*')
@@ -605,12 +570,16 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 if __name__ == '__main__':
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), SimulatorServer) as httpd:
-        print(f"Mobile Simulator running at http://localhost:{PORT}")
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nShutting down server.")
-            httpd.server_close()
+    httpd = ThreadedHTTPServer(("", PORT), SimulatorServer)
+    print(f"Mobile Simulator running at http://localhost:{PORT}")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down server.")
+        httpd.server_close()

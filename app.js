@@ -337,9 +337,9 @@
     touchRipple.style.left = `${x}px`;
     touchRipple.style.top = `${y}px`;
     touchRipple.classList.remove('animating');
-    // Force reflow
-    void touchRipple.offsetWidth;
-    touchRipple.classList.add('animating');
+    requestAnimationFrame(() => {
+      touchRipple.classList.add('animating');
+    });
   }
 
   // Tracking over Empty Screen Placeholder
@@ -351,7 +351,7 @@
       const x = (e.clientX - rect.left) / scale;
       const y = (e.clientY - rect.top) / scale;
       setCursorPos(x, y);
-    });
+    }, { passive: true });
 
     emptyPlaceholder.addEventListener('mousedown', (e) => {
       if (!isTouchIndicatorEnabled) return;
@@ -359,16 +359,16 @@
       const rect = emptyPlaceholder.getBoundingClientRect();
       const scale = getCurrentScale();
       triggerTouchRipple((e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
-    });
+    }, { passive: true });
 
     emptyPlaceholder.addEventListener('mouseup', () => {
       circularTouchCursor.classList.remove('active');
-    });
+    }, { passive: true });
 
-    emptyPlaceholder.addEventListener('mouseleave', handleScreenPointerLeave);
+    emptyPlaceholder.addEventListener('mouseleave', handleScreenPointerLeave, { passive: true });
   }
 
-  // Hook iframe document for tracking without blocking clicks
+  // Hook iframe document for tracking, smooth scrolling and mobile touch emulation
   function hookIframeDocument() {
     try {
       const iframeDoc = simulatorIframe.contentDocument || simulatorIframe.contentWindow.document;
@@ -376,15 +376,19 @@
 
       // Ensure native hardware SVG cursor and hidden scrollbar inside iframe document
       try {
-        const style = iframeDoc.createElement('style');
-        style.textContent = `
-          * { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto !important; }
-          ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }
-          ::-webkit-scrollbar-track { background: transparent !important; }
-          ::-webkit-scrollbar-thumb { background: transparent !important; }
-          html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }
-        `;
-        if (iframeDoc.head) iframeDoc.head.appendChild(style);
+        let style = iframeDoc.getElementById('simulator-mobile-overrides');
+        if (!style) {
+          style = iframeDoc.createElement('style');
+          style.id = 'simulator-mobile-overrides';
+          style.textContent = `
+            html, body, button, a, input, select, textarea, label { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto !important; }
+            ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }
+            ::-webkit-scrollbar-track { background: transparent !important; }
+            ::-webkit-scrollbar-thumb { background: transparent !important; }
+            html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; -webkit-overflow-scrolling: touch; }
+          `;
+          if (iframeDoc.head) iframeDoc.head.appendChild(style);
+        }
       } catch (styleErr) {}
 
       // Intercept in-page anchor clicks (scroll-down buttons) to scroll ONLY the iframe window without shifting device
@@ -418,24 +422,102 @@
         }
       }, true);
 
-      // Instant 0ms GPU movement inside iframe document
+      // RAF-throttled GPU movement inside iframe document (no main-thread lag on high-DPI mice)
+      let pendingMoveRaf = null;
+      let lastMoveX = 0, lastMoveY = 0;
       iframeDoc.addEventListener('mousemove', (e) => {
         if (!isTouchIndicatorEnabled) return;
-        setCursorPos(e.clientX, e.clientY);
-      });
+        lastMoveX = e.clientX;
+        lastMoveY = e.clientY;
+        if (!pendingMoveRaf) {
+          pendingMoveRaf = requestAnimationFrame(() => {
+            pendingMoveRaf = null;
+            setCursorPos(lastMoveX, lastMoveY);
+          });
+        }
+      }, { passive: true });
 
-      iframeDoc.addEventListener('mouseleave', handleScreenPointerLeave);
+      iframeDoc.addEventListener('mouseleave', handleScreenPointerLeave, { passive: true });
 
-      // Mousedown: plays visual tap ripple AND clicks the button natively!
+      // Natural Mobile Drag-to-Scroll (Touch swipe emulation with momentum)
+      let isDragging = false;
+      let lastY = 0, lastX = 0;
+      let velocityY = 0, velocityX = 0;
+      let momentumRaf = null;
+      let dragDistance = 0;
+
       iframeDoc.addEventListener('mousedown', (e) => {
         if (!isTouchIndicatorEnabled) return;
         circularTouchCursor.classList.add('active');
         triggerTouchRipple(e.clientX, e.clientY);
-      });
+
+        // Initiate drag scroll only on primary left button and avoid text inputs
+        if (e.button !== 0) return;
+        const targetTag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
+        if (['input', 'textarea', 'select'].includes(targetTag) || e.target.isContentEditable) return;
+
+        isDragging = true;
+        lastY = e.clientY;
+        lastX = e.clientX;
+        velocityY = 0;
+        velocityX = 0;
+        dragDistance = 0;
+        if (momentumRaf) {
+          cancelAnimationFrame(momentumRaf);
+          momentumRaf = null;
+        }
+      }, { passive: true });
+
+      iframeDoc.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dy = lastY - e.clientY;
+        const dx = lastX - e.clientX;
+        dragDistance += Math.abs(dy) + Math.abs(dx);
+        lastY = e.clientY;
+        lastX = e.clientX;
+        velocityY = dy;
+        velocityX = dx;
+
+        if (dragDistance > 4) {
+          const docView = iframeDoc.defaultView || window;
+          docView.scrollBy({ top: dy, left: dx, behavior: 'auto' });
+        }
+      }, { passive: true });
+
+      const stopDrag = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        if (Math.abs(velocityY) > 1 || Math.abs(velocityX) > 1) {
+          let vY = velocityY * 1.3;
+          let vX = velocityX * 1.3;
+          const docView = iframeDoc.defaultView || window;
+          const stepMomentum = () => {
+            if (Math.abs(vY) < 0.3 && Math.abs(vX) < 0.3) return;
+            docView.scrollBy({ top: vY, left: vX, behavior: 'auto' });
+            vY *= 0.93;
+            vX *= 0.93;
+            momentumRaf = requestAnimationFrame(stepMomentum);
+          };
+          momentumRaf = requestAnimationFrame(stepMomentum);
+        }
+      };
 
       iframeDoc.addEventListener('mouseup', () => {
         circularTouchCursor.classList.remove('active');
-      });
+        stopDrag();
+      }, { passive: true });
+
+      iframeDoc.addEventListener('mouseleave', stopDrag, { passive: true });
+
+      // Suppress accidental click navigation if user was performing a swipe/drag scroll
+      iframeDoc.addEventListener('click', (e) => {
+        if (dragDistance > 6) {
+          e.preventDefault();
+          e.stopPropagation();
+          dragDistance = 0;
+        }
+      }, true);
+
     } catch (err) {
       console.log('Cross-origin frame note: direct browser events handled natively.');
     }
@@ -488,7 +570,7 @@
   canvasViewport.addEventListener('scroll', preventContainerScroll, { passive: true });
   window.addEventListener('scroll', preventContainerScroll, { passive: true });
 
-  // Forward wheel scrolling from canvas or phone frame to the simulator iframe
+  // Forward wheel scrolling from canvas or phone frame to the simulator iframe without layout thrashing
   canvasViewport.addEventListener('wheel', (e) => {
     try {
       const iframeWin = simulatorIframe.contentWindow;
@@ -498,13 +580,6 @@
           left: e.deltaX,
           behavior: 'auto'
         });
-        const iframeDoc = simulatorIframe.contentDocument || iframeWin.document;
-        if (iframeDoc && iframeDoc.scrollingElement && iframeDoc.scrollingElement.scrollTop === 0 && e.deltaY > 0) {
-          const mainScroller = iframeDoc.querySelector('main, #root, #__next, .overflow-y-auto, [data-scroll-container]');
-          if (mainScroller && mainScroller.scrollHeight > mainScroller.clientHeight) {
-            mainScroller.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: 'auto' });
-          }
-        }
       }
     } catch (err) {}
   }, { passive: true });
