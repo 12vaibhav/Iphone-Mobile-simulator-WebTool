@@ -711,15 +711,13 @@
         finalStreamToRecord = croppedStream;
       }
 
-      // MIME Type Selection: Prioritize MP4 (H.264/AVC) for native MP4 recording
+      // MIME Type Selection: Prioritize high-clarity WebM (VP9/VP8) at 1080p 30FPS
       const mimeTypes = [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=avc1',
-        'video/mp4;codecs=h264',
-        'video/mp4',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
-        'video/webm'
+        'video/webm',
+        'video/mp4;codecs=avc1',
+        'video/mp4'
       ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
 
@@ -744,9 +742,9 @@
         }
         currentVideoUrl = URL.createObjectURL(finalBlob);
 
-        const isMp4 = selectedMime.includes('mp4');
-        const fileExt = isMp4 ? 'mp4' : 'webm';
-        const formatLabel = isMp4 ? '1080p 30FPS MP4' : '1080p 30FPS WebM';
+        const isWebm = selectedMime.includes('webm');
+        const fileExt = isWebm ? 'webm' : 'mp4';
+        const formatLabel = isWebm ? '1080p 30FPS WebM' : '1080p 30FPS MP4';
 
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
@@ -754,7 +752,7 @@
         downloadRecordBtn.download = `mobile-recording-1080p-${Date.now()}.${fileExt}`;
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
         if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
-        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${isMp4 ? 'MP4' : 'WebM'}`;
+        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${isWebm ? 'WebM' : 'MP4'}`;
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
