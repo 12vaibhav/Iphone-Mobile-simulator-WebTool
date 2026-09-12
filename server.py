@@ -7,34 +7,6 @@ import sys
 
 PORT = 8080
 
-def rewrite_css_urls(css_text, base_url):
-    # 1. Rewrite @import
-    import_regex = re.compile(r'''@import\s+(?:url\(['"]?([^'"\)]+)['"]?\)|['"]([^'"]+)['"])''', re.IGNORECASE)
-    def replace_import(match):
-        u = (match.group(1) or match.group(2) or '').strip()
-        if not u or u.startswith(('data:', 'javascript:', '/proxy')):
-            return match.group(0)
-        full = urllib.parse.urljoin(base_url, u)
-        return f'@import url("/proxy?url={urllib.parse.quote(full)}")'
-    css_text = import_regex.sub(replace_import, css_text)
-
-    # 2. Rewrite all url(...) in CSS
-    url_regex = re.compile(r'''url\(\s*(['"]?)([^'")]+?)\1\s*\)''', re.IGNORECASE)
-    def replace_url(match):
-        q = match.group(1) or ''
-        raw = match.group(2).strip()
-        if not raw or raw.startswith(('data:', 'javascript:', '/proxy')):
-            return match.group(0)
-        full = urllib.parse.urljoin(base_url, raw)
-        # If it's a font, route through /proxy so it gets CORS headers
-        if re.search(r'\.(?:otf|ttf|woff2?|eot)(?:\?[^)]*)?$', raw, re.IGNORECASE):
-            return f'url({q}/proxy?url={urllib.parse.quote(full)}{q})'
-        # If it's an image, webp, svg, or any asset, resolve to absolute URL
-        return f'url({q}{full}{q})'
-    css_text = url_regex.sub(replace_url, css_text)
-
-    return css_text
-
 class SimulatorServer(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         # Allow cross-origin embedding & framing
@@ -42,10 +14,6 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
         super().end_headers()
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.end_headers()
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -65,40 +33,19 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                     target_url,
                     headers={
                         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-                        'Accept': '*/*'
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
                     }
                 )
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     final_url = resp.geturl()
                     data = resp.read()
                     content_type = resp.headers.get('Content-Type', 'text/html; charset=utf-8')
-                    clean_path = final_url.split('?')[0].lower()
 
                     if 'text/html' in content_type.lower():
+                        # Try decoding to inject base tag and mobile touch cursor styles
                         try:
                             encoding = resp.headers.get_content_charset() or 'utf-8'
                             html_text = data.decode(encoding, errors='replace')
-
-                            # Rewrite stylesheet links to proxy so their @font-face rules are also CORS-proxied
-                            link_regex = re.compile(r'''<link\s+[^>]*rel=['"]stylesheet['"][^>]*>|<link\s+[^>]*href=['"][^'"]+\.css[^'"]*['"][^>]*>''', re.IGNORECASE)
-                            def replace_css_link(match):
-                                tag = match.group(0)
-                                hm = re.search(r'''href=(['"])(.*?)\1''', tag, re.IGNORECASE)
-                                if not hm:
-                                    return tag
-                                href = hm.group(2).strip()
-                                if href.startswith(('data:', 'javascript:', '/proxy')):
-                                    return tag
-                                full_css = urllib.parse.urljoin(final_url, href)
-                                return tag.replace(hm.group(0), f'href="/proxy?url={urllib.parse.quote(full_css)}"')
-
-                            html_text = link_regex.sub(replace_css_link, html_text)
-
-                            # Rewrite inline <style> tags
-                            style_tag_regex = re.compile(r'''<style\b[^>]*>([\s\S]*?)</style>''', re.IGNORECASE)
-                            def replace_style_tag(match):
-                                return f'<style>{rewrite_css_urls(match.group(1), final_url)}</style>'
-                            html_text = style_tag_regex.sub(replace_style_tag, html_text)
 
                             # Native hardware SVG circular touch cursor (0ms latency), scrollbar removal, and in-page anchor scroll fix
                             injection = f'''
@@ -142,39 +89,8 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
 
                             data = html_text.encode(encoding, errors='replace')
                         except Exception as e:
-                            pass
+                            pass # fallback to raw bytes if decoding fails
                     
-                    # 2. CSS Processing: Rewrite fonts to proxy AND resolve all background images to absolute URLs
-                    elif 'text/css' in content_type.lower() or clean_path.endswith('.css'):
-                        try:
-                            encoding = resp.headers.get_content_charset() or 'utf-8'
-                            css_text = data.decode(encoding, errors='replace')
-                            css_text = rewrite_css_urls(css_text, final_url)
-                            data = css_text.encode(encoding, errors='replace')
-                            content_type = 'text/css; charset=utf-8'
-                        except Exception:
-                            pass
-
-                    # 3. Asset & Font Content-Type normalization for maximum browser compatibility
-                    elif clean_path.endswith('.otf'):
-                        content_type = 'font/otf'
-                    elif clean_path.endswith('.ttf'):
-                        content_type = 'font/ttf'
-                    elif clean_path.endswith('.woff'):
-                        content_type = 'font/woff'
-                    elif clean_path.endswith('.woff2'):
-                        content_type = 'font/woff2'
-                    elif clean_path.endswith('.eot'):
-                        content_type = 'application/vnd.ms-fontobject'
-                    elif clean_path.endswith('.webp'):
-                        content_type = 'image/webp'
-                    elif clean_path.endswith('.png'):
-                        content_type = 'image/png'
-                    elif clean_path.endswith(('.jpg', '.jpeg')):
-                        content_type = 'image/jpeg'
-                    elif clean_path.endswith('.svg'):
-                        content_type = 'image/svg+xml'
-
                     self.send_response(200)
                     self.send_header('Content-Type', content_type)
                     self.send_header('Content-Length', str(len(data)))
@@ -188,8 +104,8 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
             super().do_GET()
 
 if __name__ == '__main__':
-    socketserver.ThreadingTCPServer.allow_reuse_address = True
-    with socketserver.ThreadingTCPServer(("", PORT), SimulatorServer) as httpd:
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("", PORT), SimulatorServer) as httpd:
         print(f"Wedding Mobile Studio running at http://localhost:{PORT}")
         try:
             httpd.serve_forever()

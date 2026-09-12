@@ -1,42 +1,5 @@
-function rewriteCssUrls(cssText, base) {
-  // 1. Rewrite @import rules (e.g. @import url(...) or @import "...")
-  const importRegex = /@import\s+(?:url\(['"]?([^'"\)]+)['"]?\)|['"]([^'"]+)['"])/gi;
-  cssText = cssText.replace(importRegex, (match, url1, url2) => {
-    const rawUrl = (url1 || url2 || '').trim();
-    if (!rawUrl || rawUrl.startsWith('data:') || rawUrl.startsWith('/proxy')) return match;
-    try {
-      const fullUrl = new URL(rawUrl, base).href;
-      return `@import url("/proxy?url=${encodeURIComponent(fullUrl)}")`;
-    } catch (e) {
-      return match;
-    }
-  });
-
-  // 2. Rewrite all url(...) in CSS
-  const urlRegex = /url\(\s*(['"]?)([^'")]+?)\1\s*\)/gi;
-  cssText = cssText.replace(urlRegex, (match, quote, rawUrl) => {
-    const trimmed = rawUrl.trim();
-    if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('javascript:') || trimmed.startsWith('/proxy')) {
-      return match;
-    }
-    try {
-      const fullUrl = new URL(trimmed, base).href;
-      // If it is a font, route through /proxy so it gets CORS headers
-      if (/\.(?:woff2?|ttf|otf|eot)(?:\?[^'")]+)?$/i.test(trimmed)) {
-        return `url("/proxy?url=${encodeURIComponent(fullUrl)}")`;
-      }
-      // If it's an image, webp, svg, or any other asset, resolve to absolute URL so it loads directly with zero 404s
-      return `url("${fullUrl}")`;
-    } catch (e) {
-      return match;
-    }
-  });
-
-  return cssText;
-}
-
 export default async function handler(req, res) {
-  // Enable full Cross-Origin Access for all assets
+  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
@@ -59,41 +22,16 @@ export default async function handler(req, res) {
     const response = await fetch(finalTarget, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-        'Accept': '*/*'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       },
       redirect: 'follow'
     });
 
-    let contentType = response.headers.get('content-type') || 'text/html';
+    const contentType = response.headers.get('content-type') || 'text/html';
     const finalUrl = response.url || finalTarget;
-    const cleanPath = finalUrl.split('?')[0].toLowerCase();
 
-    // 1. HTML Processing: Rewrite stylesheets, inline font/image declarations & inject simulator controls
     if (contentType.includes('text/html')) {
       let htmlText = await response.text();
-
-      // Rewrite stylesheet links to proxy so their @font-face rules and images are correctly handled
-      const linkRegex = /<link\s+[^>]*rel=['"]stylesheet['"][^>]*>|<link\s+[^>]*href=['"][^'"]+\.css[^'"]*['"][^>]*>/gi;
-      htmlText = htmlText.replace(linkRegex, (match) => {
-        const hrefMatch = match.match(/href=(['"])(.*?)\1/i);
-        if (!hrefMatch) return match;
-        const rawHref = hrefMatch[2].trim();
-        if (rawHref.startsWith('data:') || rawHref.startsWith('javascript:') || rawHref.startsWith('/proxy')) {
-          return match;
-        }
-        try {
-          const fullCssUrl = new URL(rawHref, finalUrl).href;
-          return match.replace(hrefMatch[0], `href="/proxy?url=${encodeURIComponent(fullCssUrl)}"`);
-        } catch (e) {
-          return match;
-        }
-      });
-
-      // Rewrite fonts and background URLs in inline <style> tags
-      const styleTagRegex = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
-      htmlText = htmlText.replace(styleTagRegex, (match, styleContent) => {
-        return `<style>${rewriteCssUrls(styleContent, finalUrl)}</style>`;
-      });
 
       const injection = `
 <base href="${finalUrl}">
@@ -136,38 +74,9 @@ export default async function handler(req, res) {
         htmlText = injection + htmlText;
       }
 
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Type', contentType);
       return res.status(200).send(htmlText);
-    } 
-    // 2. CSS Processing: Rewrite fonts to proxy AND resolve all background images to absolute URLs
-    else if (contentType.includes('text/css') || cleanPath.endsWith('.css')) {
-      let cssText = await response.text();
-      cssText = rewriteCssUrls(cssText, finalUrl);
-      res.setHeader('Content-Type', 'text/css; charset=utf-8');
-      return res.status(200).send(cssText);
-    } 
-    // 3. Asset & Font Content-Type normalization for maximum browser compatibility
-    else {
-      if (cleanPath.endsWith('.woff2')) {
-        contentType = 'font/woff2';
-      } else if (cleanPath.endsWith('.woff')) {
-        contentType = 'font/woff';
-      } else if (cleanPath.endsWith('.ttf')) {
-        contentType = 'font/ttf';
-      } else if (cleanPath.endsWith('.otf')) {
-        contentType = 'font/otf';
-      } else if (cleanPath.endsWith('.eot')) {
-        contentType = 'application/vnd.ms-fontobject';
-      } else if (cleanPath.endsWith('.webp')) {
-        contentType = 'image/webp';
-      } else if (cleanPath.endsWith('.png')) {
-        contentType = 'image/png';
-      } else if (cleanPath.endsWith('.jpg') || cleanPath.endsWith('.jpeg')) {
-        contentType = 'image/jpeg';
-      } else if (cleanPath.endsWith('.svg')) {
-        contentType = 'image/svg+xml';
-      }
-
+    } else {
       const buffer = await response.arrayBuffer();
       res.setHeader('Content-Type', contentType);
       return res.status(200).send(Buffer.from(buffer));
