@@ -199,7 +199,7 @@ export default async function handler(req, res) {
       // 3. Rewrite url() inside inline style="..." attributes (background images)
       htmlText = rewriteStyleAttributes(htmlText, finalUrl);
 
-      // 4. Inject simulator utilities
+      // 4. Inject simulator utilities + runtime font proxy
       const injection = `
 <base href="${finalUrl}">
 <style id="simulator-mobile-styles">
@@ -209,6 +209,88 @@ export default async function handler(req, res) {
   ::-webkit-scrollbar-thumb { background: transparent !important; }
   html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }
 </style>
+<script id="simulator-font-proxy">
+/* Runtime font proxy — intercepts JS-dynamically-inserted <link>/<style> elements
+   that bypass server-side rewriting (React, Next.js, Vue chunk CSS, CSS-in-JS).
+   Uses document.baseURI (which respects <base href>) for correct URL resolution. */
+(function(){
+  var PFX = location.origin + '/api/proxy?url=';
+
+  function alreadyProxied(u) {
+    return !u || u.indexOf('/api/proxy?url=') > -1 || u.startsWith('data:') || u.startsWith('blob:');
+  }
+
+  function toProxy(rawUrl) {
+    if (alreadyProxied(rawUrl)) return rawUrl;
+    try {
+      var abs = new URL(rawUrl, document.baseURI).href;
+      return PFX + encodeURIComponent(abs);
+    } catch(e) { return rawUrl; }
+  }
+
+  function patchLink(el) {
+    try {
+      var rel = (el.getAttribute('rel') || '').toLowerCase();
+      var isSheet = rel.indexOf('stylesheet') > -1;
+      var isFont  = rel.indexOf('preload') > -1 && el.getAttribute('as') === 'font';
+      if (!isSheet && !isFont) return;
+      var h = el.getAttribute('href');
+      if (h && !alreadyProxied(h)) el.setAttribute('href', toProxy(h));
+    } catch(e) {}
+  }
+
+  function patchStyle(el) {
+    try {
+      var t = el.textContent;
+      if (!t || t.indexOf('url(') < 0) return;
+      var rewritten = t.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, function(m, q, raw) {
+        if (alreadyProxied(raw) || raw.startsWith('data:')) return m;
+        try {
+          var abs = new URL(raw, document.baseURI).href;
+          return 'url(' + q + PFX + encodeURIComponent(abs) + q + ')';
+        } catch(e) { return m; }
+      });
+      if (rewritten !== t) el.textContent = rewritten;
+    } catch(e) {}
+  }
+
+  function patchNode(n) {
+    if (!n || n.nodeType !== 1) return;
+    var tag = n.tagName ? n.tagName.toUpperCase() : '';
+    if (tag === 'LINK')  patchLink(n);
+    if (tag === 'STYLE') patchStyle(n);
+  }
+
+  var _ac = Element.prototype.appendChild;
+  var _ib = Element.prototype.insertBefore;
+  var _pp = Element.prototype.prepend;
+
+  Element.prototype.appendChild = function(c) {
+    try { patchNode(c); } catch(e) {}
+    return _ac.call(this, c);
+  };
+  Element.prototype.insertBefore = function(c, r) {
+    try { patchNode(c); } catch(e) {}
+    return _ib.call(this, c, r);
+  };
+  Element.prototype.prepend = function() {
+    try { for (var i=0; i<arguments.length; i++) patchNode(arguments[i]); } catch(e) {}
+    return _pp.apply(this, arguments);
+  };
+
+  new MutationObserver(function(muts) {
+    muts.forEach(function(m) {
+      m.addedNodes.forEach(function(n) {
+        patchNode(n);
+        if (n.querySelectorAll) {
+          n.querySelectorAll('link').forEach(patchLink);
+          n.querySelectorAll('style').forEach(patchStyle);
+        }
+      });
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>
 <script id="simulator-anchor-fix">
   document.addEventListener('click', function(e) {
     const anchor = e.target.closest('a');
@@ -233,7 +315,8 @@ export default async function handler(req, res) {
 </script>
 `;
       if (/<head[^>]*>/i.test(htmlText)) {
-        htmlText = htmlText.replace(/(<head[^>]*>)/i, `$1${injection}`);
+        // Use a function so backslashes in 'injection' are literal, not replacement patterns
+        htmlText = htmlText.replace(/(<head[^>]*>)/i, (m, tag) => tag + injection);
       } else {
         htmlText = injection + htmlText;
       }

@@ -268,7 +268,7 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
                         # 3. Rewrite url() inside style="..." attributes (bg images)
                         html_text = rewrite_style_attributes(html_text, final_url)
 
-                        # 4. Inject simulator utilities
+                        # 4. Inject simulator utilities + runtime font proxy
                         injection = f'''
 <base href="{final_url}">
 <style id="simulator-mobile-styles">
@@ -278,6 +278,96 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
   ::-webkit-scrollbar-thumb {{ background: transparent !important; }}
   html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; }}
 </style>
+<script id="simulator-font-proxy">
+/* Runtime font proxy: catches JS-dynamically-inserted <link>/<style> elements
+   that bypass server-side rewriting (React, Next.js, Vue chunk CSS loading,
+   CSS-in-JS etc). Uses document.baseURI so URLs resolve against <base href>
+   (the target origin), not localhost. */
+(function(){{
+  var PFX = location.origin + '/proxy?url=';
+
+  function alreadyProxied(u) {{
+    return !u || u.indexOf('/proxy?url=') > -1 || u.startsWith('data:') || u.startsWith('blob:');
+  }}
+
+  function toProxy(rawUrl) {{
+    if (alreadyProxied(rawUrl)) return rawUrl;
+    try {{
+      var abs = new URL(rawUrl, document.baseURI).href;
+      return PFX + encodeURIComponent(abs);
+    }} catch(e) {{ return rawUrl; }}
+  }}
+
+  /* Patch a <link rel="stylesheet"> or <link rel="preload" as="font"> */
+  function patchLink(el) {{
+    try {{
+      var rel = (el.getAttribute('rel') || '').toLowerCase();
+      var isSheet = rel.indexOf('stylesheet') > -1;
+      var isFont  = rel.indexOf('preload') > -1 && el.getAttribute('as') === 'font';
+      if (!isSheet && !isFont) return;
+      var h = el.getAttribute('href');
+      if (h && !alreadyProxied(h)) el.setAttribute('href', toProxy(h));
+    }} catch(e) {{}}
+  }}
+
+  /* Rewrite url() inside a dynamically injected <style> element */
+  function patchStyle(el) {{
+    try {{
+      var t = el.textContent;
+      if (!t || t.indexOf('url(') < 0) return;
+      var rewritten = t.replace(/url\((['"]?)([^)'"\s]+)\1\)/g, function(m, q, raw) {{
+        if (alreadyProxied(raw) || raw.startsWith('data:')) return m;
+        try {{
+          var abs = new URL(raw, document.baseURI).href;
+          return 'url(' + q + PFX + encodeURIComponent(abs) + q + ')';
+        }} catch(e) {{ return m; }}
+      }});
+      if (rewritten !== t) el.textContent = rewritten;
+    }} catch(e) {{}}
+  }}
+
+  function patchNode(n) {{
+    if (!n || n.nodeType !== 1) return;
+    var tag = n.tagName ? n.tagName.toUpperCase() : '';
+    if (tag === 'LINK')  patchLink(n);
+    if (tag === 'STYLE') patchStyle(n);
+  }}
+
+  /* Override DOM insertion methods — fires synchronously BEFORE the browser
+     starts fetching, so the URL is already rewritten when the fetch begins. */
+  var _ac = Element.prototype.appendChild;
+  var _ib = Element.prototype.insertBefore;
+  var _pp = Element.prototype.prepend;
+
+  Element.prototype.appendChild = function(c) {{
+    try {{ patchNode(c); }} catch(e) {{}}
+    return _ac.call(this, c);
+  }};
+  Element.prototype.insertBefore = function(c, r) {{
+    try {{ patchNode(c); }} catch(e) {{}}
+    return _ib.call(this, c, r);
+  }};
+  Element.prototype.prepend = function() {{
+    try {{ for (var i=0; i<arguments.length; i++) patchNode(arguments[i]); }} catch(e) {{}}
+    return _pp.apply(this, arguments);
+  }};
+
+  /* MutationObserver as a safety-net for any insertions that bypass the
+     prototype overrides (e.g. innerHTML assignment, framework internals). */
+  new MutationObserver(function(muts) {{
+    muts.forEach(function(m) {{
+      m.addedNodes.forEach(function(n) {{
+        patchNode(n);
+        /* Also scan children: some frameworks insert a whole sub-tree at once */
+        if (n.querySelectorAll) {{
+          n.querySelectorAll('link').forEach(patchLink);
+          n.querySelectorAll('style').forEach(patchStyle);
+        }}
+      }});
+    }});
+  }}).observe(document.documentElement, {{ childList: true, subtree: true }});
+}})();
+</script>
 <script id="simulator-anchor-fix">
   document.addEventListener('click', function(e) {{
     const anchor = e.target.closest('a');
@@ -304,8 +394,11 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
 </script>
 '''
                         if '<head' in html_text.lower():
+                            # Use a lambda so backslashes in 'injection' are
+                            # treated as literal characters, not regex escapes.
                             html_text = re.sub(
-                                r'(<head[^>]*>)', r'\1' + injection,
+                                r'(<head[^>]*>)',
+                                lambda m: m.group(1) + injection,
                                 html_text, count=1, flags=re.IGNORECASE
                             )
                         else:
