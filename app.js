@@ -1052,7 +1052,7 @@
       }
       if (cropCtx) {
         cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'high';
+        cropCtx.imageSmoothingQuality = 'medium';
       }
     }
   }
@@ -1162,7 +1162,7 @@
           cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
         }
         cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'high';
+        cropCtx.imageSmoothingQuality = 'medium';
 
         updateCropParameters();
 
@@ -1189,7 +1189,7 @@
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 12000000 // 12 Mbps: Pristine 1080p 30FPS quality with 0 stutter
+        videoBitsPerSecond: 10000000 // 10 Mbps: Pristine 1080p 30FPS quality with silky-smooth responsiveness
       });
 
       mediaRecorder.ondataavailable = (event) => {
