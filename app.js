@@ -53,6 +53,16 @@
   const recordingBadge = document.getElementById('recordingBadge');
   const recordingTimer = document.getElementById('recordingTimer');
 
+  // 9:16 Interactive Crop Viewfinder Elements
+  const cropOverlayContainer = document.getElementById('cropOverlayContainer');
+  const cropBox = document.getElementById('cropBox');
+  const cropGrid = document.getElementById('cropGrid');
+  const cropQualitySelect = document.getElementById('cropQualitySelect');
+  const cropSnapBtn = document.getElementById('cropSnapBtn');
+  const cropConfirmBtn = document.getElementById('cropConfirmBtn');
+  const cropCancelBtn = document.getElementById('cropCancelBtn');
+  const cropActionBar = document.getElementById('cropActionBar');
+
   // Recording Modal Elements
   const recordModalBackdrop = document.getElementById('recordModalBackdrop');
   const recordedVideoPlayer = document.getElementById('recordedVideoPlayer');
@@ -439,84 +449,21 @@
 
       iframeDoc.addEventListener('mouseleave', handleScreenPointerLeave, { passive: true });
 
-      // Natural Mobile Drag-to-Scroll (Touch swipe emulation with momentum)
-      let isDragging = false;
-      let lastY = 0, lastX = 0;
-      let velocityY = 0, velocityX = 0;
-      let momentumRaf = null;
-      let dragDistance = 0;
-
+      // Handle touch cursor press and ripple without moving or scrolling the screen
       iframeDoc.addEventListener('mousedown', (e) => {
         if (!isTouchIndicatorEnabled) return;
         circularTouchCursor.classList.add('active');
         triggerTouchRipple(e.clientX, e.clientY);
-
-        // Initiate drag scroll only on primary left button and avoid text inputs
-        if (e.button !== 0) return;
-        const targetTag = e.target.tagName ? e.target.tagName.toLowerCase() : '';
-        if (['input', 'textarea', 'select'].includes(targetTag) || e.target.isContentEditable) return;
-
-        isDragging = true;
-        lastY = e.clientY;
-        lastX = e.clientX;
-        velocityY = 0;
-        velocityX = 0;
-        dragDistance = 0;
-        if (momentumRaf) {
-          cancelAnimationFrame(momentumRaf);
-          momentumRaf = null;
-        }
       }, { passive: true });
-
-      iframeDoc.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dy = lastY - e.clientY;
-        const dx = lastX - e.clientX;
-        dragDistance += Math.abs(dy) + Math.abs(dx);
-        lastY = e.clientY;
-        lastX = e.clientX;
-        velocityY = dy;
-        velocityX = dx;
-
-        if (dragDistance > 4) {
-          const docView = iframeDoc.defaultView || window;
-          docView.scrollBy({ top: dy, left: dx, behavior: 'auto' });
-        }
-      }, { passive: true });
-
-      const stopDrag = () => {
-        if (!isDragging) return;
-        isDragging = false;
-        if (Math.abs(velocityY) > 1 || Math.abs(velocityX) > 1) {
-          let vY = velocityY * 1.3;
-          let vX = velocityX * 1.3;
-          const docView = iframeDoc.defaultView || window;
-          const stepMomentum = () => {
-            if (Math.abs(vY) < 0.3 && Math.abs(vX) < 0.3) return;
-            docView.scrollBy({ top: vY, left: vX, behavior: 'auto' });
-            vY *= 0.93;
-            vX *= 0.93;
-            momentumRaf = requestAnimationFrame(stepMomentum);
-          };
-          momentumRaf = requestAnimationFrame(stepMomentum);
-        }
-      };
 
       iframeDoc.addEventListener('mouseup', () => {
         circularTouchCursor.classList.remove('active');
-        stopDrag();
       }, { passive: true });
 
-      iframeDoc.addEventListener('mouseleave', stopDrag, { passive: true });
-
-      // Suppress accidental click navigation if user was performing a swipe/drag scroll
-      iframeDoc.addEventListener('click', (e) => {
-        if (dragDistance > 6) {
-          e.preventDefault();
-          e.stopPropagation();
-          dragDistance = 0;
-        }
-      }, true);
+      // Prevent native ghost image/link dragging while dragging the cursor across the screen
+      iframeDoc.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+      });
 
     } catch (err) {
       console.log('Cross-origin frame note: direct browser events handled natively.');
@@ -641,7 +588,7 @@
   calculateAndApplyScale();
 
   // ==========================================
-  // High-Performance Mobile Screen Recording Engine
+  // High-Performance Mobile Screen Recording Engine (9:16 Crop Enabled)
   // ==========================================
   let rawDisplayStream = null;
   let croppedStream = null;
@@ -651,6 +598,11 @@
   let cropAnimFrameId = null;
   let isNativeCropActive = false;
   let cachedDeviceRect = null;
+
+  // 9:16 Crop Selection State
+  let activeCropRect = null;
+  let wasCropped916 = false;
+  const CROP_ASPECT_RATIO = 9 / 16; // 0.5625
 
   function updateCachedRect() {
     if (deviceWrapper) {
@@ -678,6 +630,299 @@
   function stopRecordingTimer() {
     clearInterval(recordTimerInterval);
     recordingBadge.classList.add('hidden');
+  }
+
+  // ==========================================
+  // 9:16 Interactive Crop Viewfinder Logic
+  // ==========================================
+  function snapCropToDevice() {
+    if (!cropBox || !deviceWrapper || !canvasViewport) return;
+    const vpRect = canvasViewport.getBoundingClientRect();
+    const devRect = deviceWrapper.getBoundingClientRect();
+
+    // Available space inside viewport with margin
+    const maxW = Math.max(200, vpRect.width - 32);
+    const maxH = Math.max(350, vpRect.height - 32);
+
+    // Enclose phone with generous aesthetic framing padding
+    const pad = 28;
+    let targetH = devRect.height + pad * 2;
+    let targetW = targetH * CROP_ASPECT_RATIO;
+
+    if (targetW < devRect.width + pad * 2) {
+      targetW = devRect.width + pad * 2;
+      targetH = targetW / CROP_ASPECT_RATIO;
+    }
+
+    // Scale down if exceeds viewport bounds
+    if (targetH > maxH) {
+      targetH = maxH;
+      targetW = targetH * CROP_ASPECT_RATIO;
+    }
+    if (targetW > maxW) {
+      targetW = maxW;
+      targetH = targetW / CROP_ASPECT_RATIO;
+    }
+
+    // Center over deviceWrapper relative to canvasViewport
+    const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
+    const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
+
+    let left = devCenterRelX - targetW / 2;
+    let top = devCenterRelY - targetH / 2;
+
+    // Clamp inside viewport
+    left = Math.max(8, Math.min(vpRect.width - targetW - 8, left));
+    top = Math.max(8, Math.min(vpRect.height - targetH - 8, top));
+
+    cropBox.style.width = `${Math.round(targetW)}px`;
+    cropBox.style.height = `${Math.round(targetH)}px`;
+    cropBox.style.left = `${Math.round(left)}px`;
+    cropBox.style.top = `${Math.round(top)}px`;
+
+    updateCropDimensionsUI();
+    checkActionBarFlip();
+  }
+
+  function updateCropDimensionsUI() {
+    // Quality selection is now controlled via cropQualitySelect
+  }
+
+  function checkActionBarFlip() {
+    if (!cropActionBar || !cropBox || !canvasViewport) return;
+    const top = parseFloat(cropBox.style.top) || 0;
+    const height = parseFloat(cropBox.style.height) || 0;
+    const vpHeight = canvasViewport.clientHeight;
+
+    if (top + height + 68 > vpHeight) {
+      cropActionBar.classList.add('flip-top');
+    } else {
+      cropActionBar.classList.remove('flip-top');
+    }
+  }
+
+  function openCropViewfinder() {
+    if (!cropOverlayContainer || !cropBox) return;
+    cropOverlayContainer.classList.add('active');
+    snapCropToDevice();
+    showToast('📐 Frame your 9:16 Reel & click "Start 9:16 Record"', 3000);
+  }
+
+  function closeCropViewfinder() {
+    if (!cropOverlayContainer) return;
+    cropOverlayContainer.classList.remove('active');
+  }
+
+  // --- Dragging the Crop Box ---
+  let isDraggingCrop = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let initialBoxLeft = 0;
+  let initialBoxTop = 0;
+
+  if (cropBox) {
+    cropBox.addEventListener('pointerdown', (e) => {
+      // Don't drag if clicking resize handle, action bar, or child buttons
+      if (e.target.closest('.crop-handle') || e.target.closest('.crop-action-bar')) return;
+      isDraggingCrop = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      initialBoxLeft = parseFloat(cropBox.style.left) || 0;
+      initialBoxTop = parseFloat(cropBox.style.top) || 0;
+      cropBox.classList.add('dragging');
+      cropBox.setPointerCapture(e.pointerId);
+    });
+
+    cropBox.addEventListener('pointermove', (e) => {
+      if (!isDraggingCrop || !canvasViewport) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const vpWidth = canvasViewport.clientWidth;
+      const vpHeight = canvasViewport.clientHeight;
+      const boxW = cropBox.offsetWidth;
+      const boxH = cropBox.offsetHeight;
+
+      let newLeft = initialBoxLeft + dx;
+      let newTop = initialBoxTop + dy;
+
+      newLeft = Math.max(0, Math.min(vpWidth - boxW, newLeft));
+      newTop = Math.max(0, Math.min(vpHeight - boxH, newTop));
+
+      cropBox.style.left = `${Math.round(newLeft)}px`;
+      cropBox.style.top = `${Math.round(newTop)}px`;
+
+      checkActionBarFlip();
+    });
+
+    const endDrag = (e) => {
+      if (!isDraggingCrop) return;
+      isDraggingCrop = false;
+      cropBox.classList.remove('dragging');
+      try { cropBox.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
+
+    cropBox.addEventListener('pointerup', endDrag);
+    cropBox.addEventListener('pointercancel', endDrag);
+  }
+
+  // --- Resizing the Crop Box (Strict 9:16 Aspect Ratio) ---
+  let activeResizeHandle = null;
+  let resizeStartX = 0;
+  let resizeStartY = 0;
+  let initialResizeLeft = 0;
+  let initialResizeTop = 0;
+  let initialResizeW = 0;
+  let initialResizeH = 0;
+
+  const cropHandles = cropOverlayContainer ? cropOverlayContainer.querySelectorAll('.crop-handle') : [];
+  cropHandles.forEach(handle => {
+    handle.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      activeResizeHandle = handle.dataset.handle;
+      resizeStartX = e.clientX;
+      resizeStartY = e.clientY;
+      initialResizeLeft = parseFloat(cropBox.style.left) || 0;
+      initialResizeTop = parseFloat(cropBox.style.top) || 0;
+      initialResizeW = cropBox.offsetWidth;
+      initialResizeH = cropBox.offsetHeight;
+
+      cropBox.classList.add('resizing');
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+      if (!activeResizeHandle || !canvasViewport) return;
+      const dx = e.clientX - resizeStartX;
+      const dy = e.clientY - resizeStartY;
+      const vpWidth = canvasViewport.clientWidth;
+      const vpHeight = canvasViewport.clientHeight;
+
+      let newW = initialResizeW;
+      let newH = initialResizeH;
+      let newLeft = initialResizeLeft;
+      let newTop = initialResizeTop;
+
+      const MIN_W = 180;
+
+      if (activeResizeHandle === 'br') {
+        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (dy * CROP_ASPECT_RATIO);
+        newW = Math.max(MIN_W, initialResizeW + delta);
+        newH = newW / CROP_ASPECT_RATIO;
+        if (newLeft + newW > vpWidth) {
+          newW = vpWidth - newLeft;
+          newH = newW / CROP_ASPECT_RATIO;
+        }
+        if (newTop + newH > vpHeight) {
+          newH = vpHeight - newTop;
+          newW = newH * CROP_ASPECT_RATIO;
+        }
+      } else if (activeResizeHandle === 'tr') {
+        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (-dy * CROP_ASPECT_RATIO);
+        newW = Math.max(MIN_W, initialResizeW + delta);
+        newH = newW / CROP_ASPECT_RATIO;
+        newTop = initialResizeTop - (newH - initialResizeH);
+        if (newTop < 0) {
+          newTop = 0;
+          newH = initialResizeTop + initialResizeH;
+          newW = newH * CROP_ASPECT_RATIO;
+        }
+        if (newLeft + newW > vpWidth) {
+          newW = vpWidth - newLeft;
+          newH = newW / CROP_ASPECT_RATIO;
+          newTop = initialResizeTop - (newH - initialResizeH);
+        }
+      } else if (activeResizeHandle === 'bl') {
+        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (dy * CROP_ASPECT_RATIO);
+        newW = Math.max(MIN_W, initialResizeW + delta);
+        newH = newW / CROP_ASPECT_RATIO;
+        newLeft = initialResizeLeft - (newW - initialResizeW);
+        if (newLeft < 0) {
+          newLeft = 0;
+          newW = initialResizeLeft + initialResizeW;
+          newH = newW / CROP_ASPECT_RATIO;
+        }
+        if (newTop + newH > vpHeight) {
+          newH = vpHeight - newTop;
+          newW = newH * CROP_ASPECT_RATIO;
+          newLeft = initialResizeLeft - (newW - initialResizeW);
+        }
+      } else if (activeResizeHandle === 'tl') {
+        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (-dy * CROP_ASPECT_RATIO);
+        newW = Math.max(MIN_W, initialResizeW + delta);
+        newH = newW / CROP_ASPECT_RATIO;
+        newLeft = initialResizeLeft - (newW - initialResizeW);
+        newTop = initialResizeTop - (newH - initialResizeH);
+        if (newLeft < 0) {
+          newLeft = 0;
+          newW = initialResizeLeft + initialResizeW;
+          newH = newW / CROP_ASPECT_RATIO;
+          newTop = initialResizeTop - (newH - initialResizeH);
+        }
+        if (newTop < 0) {
+          newTop = 0;
+          newH = initialResizeTop + initialResizeH;
+          newW = newH * CROP_ASPECT_RATIO;
+          newLeft = initialResizeLeft - (newW - initialResizeW);
+        }
+      }
+
+      cropBox.style.width = `${Math.round(newW)}px`;
+      cropBox.style.height = `${Math.round(newH)}px`;
+      cropBox.style.left = `${Math.round(newLeft)}px`;
+      cropBox.style.top = `${Math.round(newTop)}px`;
+
+      updateCropDimensionsUI();
+      checkActionBarFlip();
+    });
+
+    const endResize = (e) => {
+      if (!activeResizeHandle) return;
+      activeResizeHandle = null;
+      cropBox.classList.remove('resizing');
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
+
+    handle.addEventListener('pointerup', endResize);
+    handle.addEventListener('pointercancel', endResize);
+  });
+
+  // Buttons in Crop Action Bar
+  if (cropSnapBtn) {
+    cropSnapBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      snapCropToDevice();
+      showToast('🎯 Snapped 9:16 frame to iPhone');
+    });
+  }
+
+  if (cropCancelBtn) {
+    cropCancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeCropViewfinder();
+      activeCropRect = null;
+    });
+  }
+
+  if (cropConfirmBtn) {
+    cropConfirmBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!cropBox) return;
+
+      // Calculate inner bounds of cropBox (excluding outer border) in viewport client coordinates
+      const boxRect = cropBox.getBoundingClientRect();
+      activeCropRect = {
+        left: boxRect.left + 2,
+        top: boxRect.top + 2,
+        width: boxRect.width - 4,
+        height: boxRect.height - 4
+      };
+
+      // Hide overlay so NO dotted lines, handles, or scrim are rendered into the capture!
+      closeCropViewfinder();
+
+      // Start the actual screen recording
+      await startScreenRecording();
+    });
   }
 
   // Fixes WebM duration header so browser players play with 100% hardware smooth 1.0x speed
@@ -774,8 +1019,10 @@
   let cropParams = null;
 
   function updateCropParameters() {
-    if (!deviceWrapper || !helperVideo) return;
-    const rect = deviceWrapper.getBoundingClientRect();
+    if (!helperVideo) return;
+    const rect = activeCropRect || (deviceWrapper ? deviceWrapper.getBoundingClientRect() : null);
+    if (!rect) return;
+
     const vWidth = helperVideo.videoWidth || 1920;
     const vHeight = helperVideo.videoHeight || 1080;
     const winWidth = window.innerWidth || 1;
@@ -788,40 +1035,53 @@
     const sWidth = Math.max(10, Math.min(vWidth - sx, Math.round(rect.width * scaleX)));
     const sHeight = Math.max(10, Math.min(vHeight - sy, Math.round(rect.height * scaleY)));
 
+    // Always target full 1080x1920 Full HD 30FPS
+    const targetW = 1080;
+    const targetH = 1920;
+
     cropParams = {
       sx, sy,
       sWidth, sHeight,
-      targetW: sWidth,
-      targetH: sHeight
+      targetW, targetH
     };
 
     if (cropCanvas) {
-      if (cropCanvas.width !== sWidth || cropCanvas.height !== sHeight) {
-        cropCanvas.width = sWidth;
-        cropCanvas.height = sHeight;
+      if (cropCanvas.width !== targetW || cropCanvas.height !== targetH) {
+        cropCanvas.width = targetW;
+        cropCanvas.height = targetH;
+      }
+      if (cropCtx) {
+        cropCtx.imageSmoothingEnabled = true;
+        cropCtx.imageSmoothingQuality = 'high';
       }
     }
   }
 
   function drawCroppedFrame() {
-    if (!isRecording || isNativeCropActive || !helperVideo || !cropCtx || !cropParams) return;
+    if (isNativeCropActive || !helperVideo || !cropCtx || !cropParams) return;
     try {
-      // Direct 1:1 hardware blit (instantaneous, 0ms CPU load, 0 forced reflows)
       cropCtx.drawImage(helperVideo, cropParams.sx, cropParams.sy, cropParams.sWidth, cropParams.sHeight, 0, 0, cropParams.targetW, cropParams.targetH);
     } catch (e) {}
   }
 
-  function scheduleNextFrame() {
-    if (!isRecording || isNativeCropActive) return;
+  function startRenderLoop() {
+    if (cropAnimFrameId) {
+      cancelAnimationFrame(cropAnimFrameId);
+      cropAnimFrameId = null;
+    }
 
-    cropAnimFrameId = requestAnimationFrame((timestamp) => {
+    function renderLoop(timestamp) {
       if (!isRecording || isNativeCropActive) return;
+
       if (timestamp - lastDrawTime >= targetFrameInterval - 3) {
         lastDrawTime = timestamp;
         drawCroppedFrame();
       }
-      scheduleNextFrame();
-    });
+      cropAnimFrameId = requestAnimationFrame(renderLoop);
+    }
+
+    lastDrawTime = performance.now();
+    cropAnimFrameId = requestAnimationFrame(renderLoop);
   }
 
   async function startScreenRecording() {
@@ -832,14 +1092,15 @@
 
     try {
       updateCachedRect();
+      wasCropped916 = !!activeCropRect;
 
-      // Request screen stream with 60 FPS capture capability for silky smooth source frames
+      // Capture 1080p at 30 FPS - matches output framerate and avoids GPU/memory bandwidth saturation
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
           width: { ideal: 1920, max: 2560 },
           height: { ideal: 1080, max: 1440 },
-          frameRate: { ideal: 60, max: 60 }
+          frameRate: { ideal: 30, max: 30 }
         },
         audio: true,
         preferCurrentTab: true,
@@ -849,8 +1110,8 @@
       isNativeCropActive = false;
       let finalStreamToRecord = rawDisplayStream;
 
-      // 1. Try Native Hardware Region Capture (CropTarget API - 0% CPU overhead)
-      if (window.CropTarget && typeof CropTarget.fromElement === 'function') {
+      // 1. Try Native Hardware Region Capture (CropTarget API - only if NOT in custom 9:16 crop mode)
+      if (!activeCropRect && window.CropTarget && typeof CropTarget.fromElement === 'function') {
         try {
           const cropTarget = await CropTarget.fromElement(deviceWrapper);
           const [videoTrack] = rawDisplayStream.getVideoTracks();
@@ -866,15 +1127,15 @@
         }
       }
 
-      // 2. Ultra-Light Hardware Canvas Fallback if native CropTarget is unsupported
+      // 2. Ultra-Light Hardware Canvas Capture (Used for 9:16 Crop Box or standard fallback)
       if (!isNativeCropActive) {
         if (!helperVideo) {
           helperVideo = document.createElement('video');
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
-          // Keep within layout with non-zero dimensions so Chromium NEVER suspends the decoder
-          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:320px;height:180px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;';
+          // Keep within layout with small dimensions so Chromium NEVER suspends decoder
+          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;';
         }
         if (!helperVideo.isConnected) {
           document.body.appendChild(helperVideo);
@@ -882,7 +1143,7 @@
         helperVideo.srcObject = rawDisplayStream;
         await helperVideo.play();
 
-        // Ensure video is actively decoding valid frames before recording starts (eliminates starting glitches!)
+        // Ensure video is actively decoding valid frames before recording starts
         if (helperVideo.readyState < 2 || !helperVideo.videoWidth) {
           await new Promise(resolve => {
             const onReady = () => {
@@ -900,6 +1161,8 @@
           cropCanvas = document.createElement('canvas');
           cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
         }
+        cropCtx.imageSmoothingEnabled = true;
+        cropCtx.imageSmoothingQuality = 'high';
 
         updateCropParameters();
 
@@ -908,21 +1171,17 @@
         cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
         drawCroppedFrame();
 
-        lastDrawTime = performance.now();
-        scheduleNextFrame();
-
-        croppedStream = cropCanvas.captureStream(30); // Exactly 30 FPS stream
+        croppedStream = cropCanvas.captureStream(30); // 30 FPS stream
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
         finalStreamToRecord = croppedStream;
       }
 
-      // MIME Type Selection: Prioritize hardware-accelerated VP8 for 0% CPU overhead and silky-smooth browsing
+      // Prioritize hardware-accelerated VP8 for 0% CPU overhead and silky-smooth browsing
       const mimeTypes = [
         'video/webm;codecs=vp8,opus',
         'video/webm;codecs=vp8',
         'video/webm',
         'video/webm;codecs=vp9,opus',
-        'video/mp4;codecs=avc1',
         'video/mp4'
       ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
@@ -930,7 +1189,7 @@
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 6000000 // 6 Mbps: Crisp HD without encoder lag or frame drops
+        videoBitsPerSecond: 12000000 // 12 Mbps: Pristine 1080p 30FPS quality with 0 stutter
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -945,7 +1204,7 @@
         let finalBlob = new Blob(recordedChunks, { type: selectedMime });
 
         // Patch WebM duration header so video element and players play with 100% hardware smooth 1.0x speed
-        if (selectedMime.includes('webm') && durationMs > 500) {
+        if (selectedMime.includes('webm') && durationMs > 500 && finalBlob.size > 1024) {
           finalBlob = await fixWebmDuration(finalBlob, durationMs);
         }
 
@@ -956,12 +1215,16 @@
 
         const isWebm = selectedMime.includes('webm');
         const fileExt = isWebm ? 'webm' : 'mp4';
-        const formatLabel = isWebm ? '1080p 30FPS WebM' : '1080p 30FPS MP4';
+        const formatLabel = wasCropped916
+          ? `1080×1920 Full HD (9:16 Reel) 30FPS ${isWebm ? 'WebM' : 'MP4'}`
+          : `1080p 30FPS ${isWebm ? 'WebM' : 'MP4'}`;
 
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
         downloadRecordBtn.href = currentVideoUrl;
-        downloadRecordBtn.download = `mobile-recording-1080p-${Date.now()}.${fileExt}`;
+        downloadRecordBtn.download = wasCropped916
+          ? `mobile-9-16-reel-1080p-${Date.now()}.${fileExt}`
+          : `mobile-recording-1080p-${Date.now()}.${fileExt}`;
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
         if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
         if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${isWebm ? 'WebM' : 'MP4'}`;
@@ -980,19 +1243,28 @@
         };
       }
 
-      // Start recording as a continuous monotonic stream without timeslice jitter
-      mediaRecorder.start();
+      // Set recording flag and start the active frame drawing loop
       isRecording = true;
       recordBtn.classList.add('recording');
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
+
+      // Immediately paint initial frame and start 30 FPS rendering loop
+      drawCroppedFrame();
+      startRenderLoop();
+
+      // Start MediaRecorder with 1000ms timeslice to ensure continuous data capture without main-thread lag
+      mediaRecorder.start(1000);
       showToast('🔴 Recording Started');
 
     } catch (err) {
       console.warn('Screen recording cancelled or error:', err);
       isRecording = false;
+      activeCropRect = null;
       if (err.name !== 'NotAllowedError') {
         alert('Could not start screen recording: ' + err.message);
+      } else {
+        showToast('Screen sharing cancelled');
       }
     }
   }
@@ -1000,6 +1272,7 @@
   function stopScreenRecording() {
     if (!isRecording) return;
     isRecording = false;
+    activeCropRect = null;
 
     if (cropAnimFrameId) {
       cancelAnimationFrame(cropAnimFrameId);
@@ -1035,7 +1308,11 @@
 
   recordBtn.addEventListener('click', () => {
     if (!isRecording) {
-      startScreenRecording();
+      if (cropOverlayContainer && cropOverlayContainer.classList.contains('active')) {
+        closeCropViewfinder();
+      } else {
+        openCropViewfinder();
+      }
     } else {
       stopScreenRecording();
     }
