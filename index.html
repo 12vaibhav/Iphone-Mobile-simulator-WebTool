@@ -49,40 +49,30 @@
           </svg>
         </button>
       </div>
-
-      <!-- Simple Refresh Button -->
-      <button id="refreshBtn" class="icon-tool-btn" title="Refresh Website inside iPhone">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M23 4v6h-6"></path>
-          <path d="M1 20v-6h6"></path>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-        </svg>
-        <span>Refresh</span>
-      </button>
     </div>
   </header>
 
   <!-- Secondary Studio Toolbar -->
   <nav class="studio-toolbar">
-    <!-- iPhone Finish Switcher -->
+    <!-- iPhone 16 Pro Finish Switcher -->
     <div class="tool-section">
-      <span class="tool-label">iPhone Finish:</span>
+      <span class="tool-label">iPhone 16 Pro Finish:</span>
       <div class="finish-swatches" id="finishSwatches">
-        <button class="swatch-btn active" data-frame="1" title="Desert Titanium">
+        <button class="swatch-btn active" data-frame="desert" title="Desert Titanium">
           <span class="swatch-circle finish-desert"></span>
           <span class="swatch-name">Desert</span>
         </button>
-        <button class="swatch-btn" data-frame="2" title="Gold Titanium">
-          <span class="swatch-circle finish-gold"></span>
-          <span class="swatch-name">Gold</span>
+        <button class="swatch-btn" data-frame="white" title="White Titanium">
+          <span class="swatch-circle finish-white"></span>
+          <span class="swatch-name">White</span>
         </button>
-        <button class="swatch-btn" data-frame="3" title="Blue Titanium">
-          <span class="swatch-circle finish-blue"></span>
+        <button class="swatch-btn" data-frame="crimson" title="Crimson Titanium">
+          <span class="swatch-circle finish-crimson"></span>
+          <span class="swatch-name">Crimson</span>
+        </button>
+        <button class="swatch-btn" data-frame="blue" title="Deep Blue Titanium">
+          <span class="swatch-circle finish-deepblue"></span>
           <span class="swatch-name">Blue</span>
-        </button>
-        <button class="swatch-btn" data-frame="4" title="Natural Titanium">
-          <span class="swatch-circle finish-natural"></span>
-          <span class="swatch-name">Natural</span>
         </button>
       </div>
     </div>
@@ -135,24 +125,11 @@
       </div>
     </div>
 
-    <div class="tool-divider"></div>
 
-    <!-- Circular Touch Indicator Toggle -->
-    <div class="tool-section">
-      <button id="touchIndicatorBtn" class="tool-btn active" title="Toggle Circular Touch / Tap Indicator">
-        <span class="touch-icon-wrap">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="8"></circle>
-            <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
-          </svg>
-        </span>
-        <span id="touchBtnText">Touch Indicator: ON</span>
-      </button>
-    </div>
 
     <div class="tool-divider"></div>
 
-    <!-- Viewport Scale & Orientation -->
+    <!-- Viewport Scale & Tilt -->
     <div class="tool-section">
       <div class="custom-select-wrap">
         <select id="scaleSelect" title="Zoom / Scale View">
@@ -164,22 +141,32 @@
         </select>
       </div>
 
-      <!-- Orientation Toggle -->
-      <button id="orientationBtn" class="tool-btn" title="Switch Orientation (Portrait / Landscape)">
+      <!-- 10-Degree Tilt Button -->
+      <button id="tiltBtn" class="tool-btn" title="Tilt Device (Click: Left -10°, Another click: Right +10°, Click: Reset 0°)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="4" y="2" width="16" height="20" rx="3" ry="3"></rect>
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
         </svg>
-        <span id="orientationText">Portrait</span>
+        <span id="tiltBtnText">Tilt: 0°</span>
       </button>
     </div>
   </nav>
 
-  <!-- Floating Bottom-Right Dock (Record & Full Screen) -->
+  <!-- Floating Bottom-Right Dock (Refresh, Record & Full Screen) -->
   <aside class="floating-bottom-dock" id="floatingBottomDock">
     <div id="recordingBadge" class="recording-badge hidden">
       <span class="pulse-dot"></span>
       <span id="recordingTimer">00:00</span>
     </div>
+
+    <!-- Refresh Website Button -->
+    <button id="refreshBtn" class="dock-btn refresh-dock-btn" title="Refresh Website inside iPhone">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <path d="M23 4v6h-6"></path>
+        <path d="M1 20v-6h6"></path>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      </svg>
+      <span>Refresh</span>
+    </button>
 
     <button id="recordBtn" class="dock-btn record-dock-btn" title="Start 1080p 30FPS WebM Screen Recording">
       <span class="record-dot"></span>
@@ -203,14 +190,14 @@
 
     <!-- Center Phone Device Rig -->
     <div class="device-rig-container" id="deviceRigContainer">
-      <div class="device-wrapper" id="deviceWrapper">
+      <div class="device-wrapper" id="deviceWrapper" data-model="iphone-16-pro">
         
         <!-- Screen Content Area (Underneath the Frame Overlay) -->
         <div class="device-screen" id="deviceScreen">
           <!-- Webpage Iframe -->
           <iframe 
             id="simulatorIframe" 
-            src="about:blank"
+            src="about:blank" 
             title="Mobile Website Preview" 
             allow="autoplay; camera; microphone; geolocation"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
@@ -242,7 +229,7 @@
         <img 
           id="iphoneFrameImg" 
           class="iphone-frame-overlay" 
-          src="Iphone Device Frame/Iphone frame (1).png" 
+          src="Iphone Device Frame/iPhone_16_Pro (1).png" 
           alt="iPhone Titanium Frame"
           draggable="false"
         >

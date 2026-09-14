@@ -51,6 +51,7 @@ html, body {
   gap: 16px;
   z-index: 100;
   flex-shrink: 0;
+  position: relative;
 }
 
 .brand {
@@ -93,13 +94,24 @@ html, body {
   letter-spacing: 0.5px;
 }
 
-/* URL Address Bar */
+/* URL Address Bar - Centered in Top Bar */
 .url-bar-container {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1;
-  max-width: 720px;
+  width: min(640px, calc(100% - 340px));
+}
+
+@media (max-width: 680px) {
+  .url-bar-container {
+    position: static;
+    transform: none;
+    width: auto;
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .url-input-wrap {
@@ -342,10 +354,10 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.finish-desert { background: linear-gradient(135deg, #b97753 0%, #874f33 100%); }
-.finish-gold { background: linear-gradient(135deg, #f2deb4 0%, #be9e63 100%); }
-.finish-blue { background: linear-gradient(135deg, #4f667d 0%, #2f3e4f 100%); }
-.finish-natural { background: linear-gradient(135deg, #d3d0c9 0%, #908d87 100%); }
+.finish-desert { background: linear-gradient(135deg, #cfb79f 0%, #9e846f 100%); }
+.finish-white { background: linear-gradient(135deg, #f2f2f3 0%, #aca6a3 100%); }
+.finish-crimson { background: linear-gradient(135deg, #ab293b 0%, #61131e 100%); }
+.finish-deepblue { background: linear-gradient(135deg, #5b719c 0%, #293852 100%); }
 
 /* Scene & Utility Controls */
 .scene-controls {
@@ -503,34 +515,40 @@ html, body {
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Device Wrapper calibrated to 1179 x 2408 frame ratio */
+/* Device Wrapper - calibrated to iPhone 16 Pro (768x1536) */
 .device-wrapper {
   position: relative;
   /* Base size rendered at crisp high-DPI proportions */
   width: 410px;
-  height: 837.28px; /* 410 * (2408 / 1179) */
+  height: 820px; /* iPhone 16 Pro (410 * 1536 / 768) */
   flex-shrink: 0;
   transform-origin: center center;
   transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Landscape Mode */
-.device-wrapper.landscape {
-  transform: rotate(-90deg);
+/* 10-degree Tilt Modes */
+.device-wrapper.tilt-left {
+  transform: rotate(-10deg);
 }
 
-/* Screen Cutout (Anchored on left edge; slightly increased width only on the right edge) */
+.device-wrapper.tilt-right {
+  transform: rotate(10deg);
+}
+
+
+/* Screen Cutout (Very slightly extended to all inner bezel edges) */
 .device-screen {
   position: absolute;
-  left: 5.75%;
-  top: 2.25%;
-  width: 89.4%;
-  height: 95.6%;
-  border-radius: 46px;
+  left: 4.95%;
+  top: 1.65%;
+  width: 90.8%;
+  height: 97.0%;
+  border-radius: 44px;
   overflow: hidden;
   background: #000000;
   z-index: 5;
   box-shadow: inset 0 0 4px rgba(0,0,0,0.8);
+  transition: left 0.3s ease, top 0.3s ease, width 0.3s ease, height 0.3s ease, border-radius 0.3s ease;
   /* Hardware-accelerated GPU layer promotion to prevent border-radius CPU rasterization jank */
   -webkit-overflow-scrolling: touch;
   isolation: isolate;
@@ -543,6 +561,7 @@ html, body {
   /* Native hardware SVG circular touch cursor (0ms latency, exact mouse speed) */
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'%3E%3Ccircle cx='17' cy='17' r='14' fill='rgba(255,255,255,0.35)' stroke='rgba(255,255,255,0.95)' stroke-width='2'/%3E%3Ccircle cx='17' cy='17' r='3' fill='%23ffffff'/%3E%3C/svg%3E") 17 17, auto;
 }
+
 
 .device-screen::-webkit-scrollbar {
   display: none !important;
@@ -948,6 +967,28 @@ html, body {
 
 .dock-btn:active {
   transform: translateY(0);
+}
+
+/* Refresh Button in Dock */
+.refresh-dock-btn {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #7dd3fc;
+}
+
+.refresh-dock-btn:hover {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.refresh-dock-btn svg.spinning {
+  animation: spin 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Record Button Styling */

@@ -20,7 +20,7 @@
   const deviceScreen = document.getElementById('deviceScreen');
   const canvasViewport = document.getElementById('canvasViewport');
 
-  // iPhone Finish Swatches
+  // iPhone 16 Pro Finish Swatches
   const finishSwatches = document.getElementById('finishSwatches');
 
   // Background Scene Controls
@@ -32,17 +32,15 @@
   const blurBtnText = document.getElementById('blurBtnText');
   const resetBgBtn = document.getElementById('resetBgBtn');
 
-  // Touch / Tap Indicator
-  const touchIndicatorBtn = document.getElementById('touchIndicatorBtn');
-  const touchBtnText = document.getElementById('touchBtnText');
+  // Touch / Tap Indicator Layer (Always ON)
   const touchIndicatorLayer = document.getElementById('touchIndicatorLayer');
   const circularTouchCursor = document.getElementById('circularTouchCursor');
   const touchRipple = document.getElementById('touchRipple');
 
-  // Viewport Scale, Orientation & Full Screen
+  // Viewport Scale, Tilt & Full Screen
   const scaleSelect = document.getElementById('scaleSelect');
-  const orientationBtn = document.getElementById('orientationBtn');
-  const orientationText = document.getElementById('orientationText');
+  const tiltBtn = document.getElementById('tiltBtn');
+  const tiltBtnText = document.getElementById('tiltBtnText');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const fullscreenBtnText = document.getElementById('fullscreenBtnText');
   const fullscreenIcon = document.getElementById('fullscreenIcon');
@@ -79,7 +77,6 @@
   // ==========================================
   // State
   // ==========================================
-  let isLandscape = false;
   let isTouchIndicatorEnabled = true;
   let isBgBlurred = false;
   let customBgDataUrl = null;
@@ -93,9 +90,18 @@
   let recordStartTime = 0;
   let currentVideoUrl = null;
 
-  // Base dimensions of device wrapper
+  // iPhone 16 Pro Finishes & Dimensions
+  const IPHONE_16_PRO_FINISHES = {
+    'desert': { name: 'Desert Titanium', label: 'Desert', cssClass: 'finish-desert', src: 'Iphone Device Frame/iPhone_16_Pro (1).png' },
+    'white':  { name: 'White Titanium',  label: 'White',  cssClass: 'finish-white',  src: 'Iphone Device Frame/iPhone_16_Pro (2).png' },
+    'crimson':{ name: 'Crimson Titanium',label: 'Crimson',cssClass: 'finish-crimson',src: 'Iphone Device Frame/iPhone_16_Pro (3).png' },
+    'blue':   { name: 'Deep Blue Titanium',label: 'Blue', cssClass: 'finish-deepblue',src: 'Iphone Device Frame/iPhone_16_Pro (4).png' }
+  };
+
+  let currentFinish = 'desert';
+
   const BASE_WIDTH = 410;
-  const BASE_HEIGHT = 837.28; // 410 * (2408 / 1179)
+  const BASE_HEIGHT = 820;
 
   // ==========================================
   // Helper: Toast Notifications
@@ -163,6 +169,16 @@
 
   // Simple Refresh Button
   function refreshIframe() {
+    if (refreshBtn) {
+      const svg = refreshBtn.querySelector('svg');
+      if (svg) {
+        svg.classList.remove('spinning');
+        void svg.offsetWidth;
+        svg.classList.add('spinning');
+        setTimeout(() => svg.classList.remove('spinning'), 600);
+      }
+    }
+
     if (!simulatorIframe.src || simulatorIframe.src === 'about:blank') {
       showToast('Please enter and load a website first');
       return;
@@ -193,42 +209,29 @@
   refreshBtn.addEventListener('click', refreshIframe);
 
   // ==========================================
-  // iPhone Finish Switcher
+  // iPhone 16 Pro Finish Switcher
   // ==========================================
-  const framePaths = {
-    '1': 'Iphone Device Frame/Iphone frame (1).png', // Desert Titanium
-    '2': 'Iphone Device Frame/Iphone frame (2).png', // Gold Titanium
-    '3': 'Iphone Device Frame/Iphone frame (3).png', // Blue Titanium
-    '4': 'Iphone Device Frame/Iphone frame (4).png'  // Natural Titanium
-  };
-
-  const finishNames = {
-    '1': 'Desert Titanium',
-    '2': 'Gold Titanium',
-    '3': 'Blue Titanium',
-    '4': 'Natural Titanium'
-  };
-
   finishSwatches.addEventListener('click', (e) => {
     const btn = e.target.closest('.swatch-btn');
     if (!btn) return;
 
     const frameId = btn.dataset.frame;
-    if (!framePaths[frameId]) return;
+    if (!IPHONE_16_PRO_FINISHES[frameId]) return;
 
-    // Update active swatch state
-    document.querySelectorAll('.swatch-btn').forEach(b => b.classList.remove('active'));
+    currentFinish = frameId;
+
+    finishSwatches.querySelectorAll('.swatch-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
 
-    // Switch image smoothly
     iphoneFrameImg.style.opacity = '0.4';
     setTimeout(() => {
-      iphoneFrameImg.src = framePaths[frameId];
+      iphoneFrameImg.src = IPHONE_16_PRO_FINISHES[frameId].src;
       iphoneFrameImg.style.opacity = '1';
     }, 100);
 
-    showToast(`📱 Switched to ${finishNames[frameId]}`);
+    showToast(`📱 Finish: ${IPHONE_16_PRO_FINISHES[frameId].name}`);
   });
+
 
   // ==========================================
   // Background Scene Customizer
@@ -313,21 +316,6 @@
     return match ? parseFloat(match[1]) : 1;
   }
 
-  touchIndicatorBtn.addEventListener('click', () => {
-    isTouchIndicatorEnabled = !isTouchIndicatorEnabled;
-    if (isTouchIndicatorEnabled) {
-      touchIndicatorLayer.classList.remove('disabled');
-      touchIndicatorBtn.classList.add('active');
-      touchBtnText.innerText = '👆 Touch Indicator: ON';
-      showToast('👆 Touch Indicator Enabled');
-    } else {
-      touchIndicatorLayer.classList.add('disabled');
-      touchIndicatorBtn.classList.remove('active');
-      touchBtnText.innerText = '👆 Touch Indicator: OFF';
-      circularTouchCursor.classList.remove('visible');
-      showToast('Touch Indicator Disabled');
-    }
-  });
 
   function setCursorPos(x, y) {
     circularTouchCursor.style.transform = `translate3d(${x - 17}px, ${y - 17}px, 0)`;
@@ -485,14 +473,8 @@
       const availWidth = canvasViewport.clientWidth - 48;
       const availHeight = canvasViewport.clientHeight - 36;
 
-      let targetWidth = BASE_WIDTH;
-      let targetHeight = BASE_HEIGHT;
-
-      if (isLandscape) {
-        // Swap bounds in landscape
-        targetWidth = BASE_HEIGHT;
-        targetHeight = BASE_WIDTH;
-      }
+      const targetWidth = BASE_WIDTH;
+      const targetHeight = BASE_HEIGHT;
 
       const scaleX = availWidth / targetWidth;
       const scaleY = availHeight / targetHeight;
@@ -531,20 +513,6 @@
     } catch (err) {}
   }, { passive: true });
 
-  // Orientation Toggle
-  orientationBtn.addEventListener('click', () => {
-    isLandscape = !isLandscape;
-    if (isLandscape) {
-      deviceWrapper.classList.add('landscape');
-      orientationText.innerText = 'Landscape';
-      showToast('🔄 Rotated to Landscape');
-    } else {
-      deviceWrapper.classList.remove('landscape');
-      orientationText.innerText = 'Portrait';
-      showToast('🔄 Rotated to Portrait');
-    }
-    calculateAndApplyScale();
-  });
 
   // Full Screen Presentation Mode (Hides Top Control Bars)
   function enterFullScreen() {
@@ -573,6 +541,44 @@
     } else {
       enterFullScreen();
     }
+  }
+
+  // ==========================================
+  // 10-Degree Device Tilt Feature (Left / Right / Reset)
+  // ==========================================
+  let currentTilt = 0; // 0: Straight, -10: Left, 10: Right
+
+  if (tiltBtn) {
+    tiltBtn.addEventListener('click', () => {
+      if (currentTilt === 0) {
+        // Rotate slightly to the left side (by 10 degree)
+        currentTilt = -10;
+        deviceWrapper.classList.remove('tilt-right');
+        deviceWrapper.classList.add('tilt-left');
+        tiltBtn.classList.add('active');
+        if (tiltBtnText) tiltBtnText.innerText = 'Tilt: -10° (Left)';
+        showToast('📐 Rotated 10° Left');
+      } else if (currentTilt === -10) {
+        // Another click: rotate to the right side (by 10 degree)
+        currentTilt = 10;
+        deviceWrapper.classList.remove('tilt-left');
+        deviceWrapper.classList.add('tilt-right');
+        tiltBtn.classList.add('active');
+        if (tiltBtnText) tiltBtnText.innerText = 'Tilt: +10° (Right)';
+        showToast('📐 Rotated 10° Right');
+      } else {
+        // Return to neutral straight orientation (0 degree)
+        currentTilt = 0;
+        deviceWrapper.classList.remove('tilt-left', 'tilt-right');
+        tiltBtn.classList.remove('active');
+        if (tiltBtnText) tiltBtnText.innerText = 'Tilt: 0°';
+        showToast('📐 Reset Rotation (0°)');
+      }
+
+      if (cropOverlayContainer && cropOverlayContainer.classList.contains('active')) {
+        setTimeout(snapCropToDevice, 360);
+      }
+    });
   }
 
   if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullScreen);
