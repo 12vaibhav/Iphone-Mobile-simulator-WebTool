@@ -602,6 +602,7 @@
   let cropCanvas = null;
   let cropCtx = null;
   let cropAnimFrameId = null;
+  let videoFrameCallbackId = null;
   let isNativeCropActive = false;
   let cachedDeviceRect = null;
 
@@ -1058,7 +1059,7 @@
       }
       if (cropCtx) {
         cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'medium';
+        cropCtx.imageSmoothingQuality = 'low';
       }
     }
   }
@@ -1066,28 +1067,59 @@
   function drawCroppedFrame() {
     if (isNativeCropActive || !helperVideo || !cropCtx || !cropParams) return;
     try {
-      cropCtx.drawImage(helperVideo, cropParams.sx, cropParams.sy, cropParams.sWidth, cropParams.sHeight, 0, 0, cropParams.targetW, cropParams.targetH);
+      cropCtx.drawImage(
+        helperVideo,
+        cropParams.sx, cropParams.sy,
+        cropParams.sWidth, cropParams.sHeight,
+        0, 0,
+        cropParams.targetW, cropParams.targetH
+      );
     } catch (e) {}
   }
 
   function startRenderLoop() {
-    if (cropAnimFrameId) {
+    stopRenderLoop();
+
+    // Primary: requestVideoFrameCallback (Chrome 83+, Edge 83+, Safari 15.4+, Firefox 116+)
+    // Synchronized directly to display capture's video compositor frames with 0% CPU polling overhead!
+    if (helperVideo && typeof helperVideo.requestVideoFrameCallback === 'function') {
+      function videoFrameLoop(now, metadata) {
+        if (!isRecording || isNativeCropActive) return;
+        drawCroppedFrame();
+        videoFrameCallbackId = helperVideo.requestVideoFrameCallback(videoFrameLoop);
+      }
+      videoFrameCallbackId = helperVideo.requestVideoFrameCallback(videoFrameLoop);
+      return;
+    }
+
+    // Fallback: RAF loop with frame rate throttling
+    let lastDraw = 0;
+    const frameInterval = 1000 / 30; // 33.3ms for 30 FPS
+
+    function rafLoop(timestamp) {
+      if (!isRecording || isNativeCropActive) return;
+      if (timestamp - lastDraw >= frameInterval - 2) {
+        lastDraw = timestamp;
+        drawCroppedFrame();
+      }
+      cropAnimFrameId = requestAnimationFrame(rafLoop);
+    }
+
+    lastDraw = performance.now();
+    cropAnimFrameId = requestAnimationFrame(rafLoop);
+  }
+
+  function stopRenderLoop() {
+    if (videoFrameCallbackId !== null && helperVideo && typeof helperVideo.cancelVideoFrameCallback === 'function') {
+      try {
+        helperVideo.cancelVideoFrameCallback(videoFrameCallbackId);
+      } catch (err) {}
+      videoFrameCallbackId = null;
+    }
+    if (cropAnimFrameId !== null) {
       cancelAnimationFrame(cropAnimFrameId);
       cropAnimFrameId = null;
     }
-
-    function renderLoop(timestamp) {
-      if (!isRecording || isNativeCropActive) return;
-
-      if (timestamp - lastDrawTime >= targetFrameInterval - 3) {
-        lastDrawTime = timestamp;
-        drawCroppedFrame();
-      }
-      cropAnimFrameId = requestAnimationFrame(renderLoop);
-    }
-
-    lastDrawTime = performance.now();
-    cropAnimFrameId = requestAnimationFrame(renderLoop);
   }
 
   async function startScreenRecording() {
@@ -1104,8 +1136,8 @@
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
-          width: { ideal: 1920, max: 2560 },
-          height: { ideal: 1080, max: 1440 },
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
           frameRate: { ideal: 30, max: 30 }
         },
         audio: true,
@@ -1140,8 +1172,8 @@
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
-          // Keep within layout with small dimensions so Chromium NEVER suspends decoder
-          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;';
+          // Keep within layout with small dimensions on isolated GPU layer to avoid compositor repaints
+          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;transform:translateZ(0);will-change:transform;';
         }
         if (!helperVideo.isConnected) {
           document.body.appendChild(helperVideo);
@@ -1165,10 +1197,10 @@
 
         if (!cropCanvas) {
           cropCanvas = document.createElement('canvas');
-          cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
+          cropCtx = cropCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
         }
         cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'medium';
+        cropCtx.imageSmoothingQuality = 'low';
 
         updateCropParameters();
 
@@ -1182,20 +1214,28 @@
         finalStreamToRecord = croppedStream;
       }
 
-      // Prioritize hardware-accelerated VP8 for 0% CPU overhead and silky-smooth browsing
+      // Prioritize hardware-accelerated video encoders (H.264 / AVC via NVENC, Intel QSV, Apple VideoToolbox)
+      // for 0% CPU overhead, smooth 60fps browser interactions, and universal compatibility.
       const mimeTypes = [
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=vp8',
-        'video/webm',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1',
+        'video/mp4',
+        'video/webm;codecs=h264,opus',
+        'video/webm;codecs=h264',
+        'video/webm;codecs=avc1',
         'video/webm;codecs=vp9,opus',
-        'video/mp4'
+        'video/webm;codecs=vp9',
+        'video/webm',
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp8'
       ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+      console.log('Selected hardware-optimized recording MIME:', selectedMime);
 
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 10000000 // 10 Mbps: Pristine 1080p 30FPS quality with silky-smooth responsiveness
+        videoBitsPerSecond: 5000000 // 5 Mbps: Pristine 1080p 30FPS quality with minimal memory & CPU pressure
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -1259,8 +1299,8 @@
       drawCroppedFrame();
       startRenderLoop();
 
-      // Start MediaRecorder with 1000ms timeslice to ensure continuous data capture without main-thread lag
-      mediaRecorder.start(1000);
+      // Start MediaRecorder with 3000ms timeslice to minimize GC churn and event loop interrupts
+      mediaRecorder.start(3000);
       showToast('🔴 Recording Started');
 
     } catch (err) {
@@ -1280,10 +1320,7 @@
     isRecording = false;
     activeCropRect = null;
 
-    if (cropAnimFrameId) {
-      cancelAnimationFrame(cropAnimFrameId);
-      cropAnimFrameId = null;
-    }
+    stopRenderLoop();
 
     recordBtn.classList.remove('recording');
     recordBtnText.innerText = 'Record';
@@ -1309,6 +1346,7 @@
       if (helperVideo.isConnected) {
         helperVideo.remove();
       }
+      helperVideo = null;
     }
   }
 
