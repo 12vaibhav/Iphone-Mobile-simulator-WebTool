@@ -611,6 +611,14 @@
   let activeCropRect = null;
   let wasCropped916 = false;
   const CROP_ASPECT_RATIO = 9 / 16; // 0.5625
+  let cropAnchor = {
+    isSnapped: true,
+    relX: 0,
+    relY: 0,
+    width: 0,
+    height: 0
+  };
+  let recordingResizeObserver = null;
 
   function updateCachedRect() {
     if (deviceWrapper) {
@@ -688,9 +696,47 @@
     cropBox.style.left = `${Math.round(left)}px`;
     cropBox.style.top = `${Math.round(top)}px`;
 
+    cropAnchor = {
+      isSnapped: true,
+      relX: 0,
+      relY: 0,
+      width: Math.round(targetW),
+      height: Math.round(targetH)
+    };
+
     syncRecordingCropFrame();
     updateCropDimensionsUI();
     checkActionBarFlip();
+  }
+
+  function realignCropToDevice() {
+    if (!cropBox || !deviceWrapper || !canvasViewport) return;
+    if (!cropAnchor || cropAnchor.isSnapped) {
+      snapCropToDevice();
+      return;
+    }
+
+    const vpRect = canvasViewport.getBoundingClientRect();
+    const devRect = deviceWrapper.getBoundingClientRect();
+
+    const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
+    const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
+
+    const targetW = cropAnchor.width || cropBox.offsetWidth;
+    const targetH = cropAnchor.height || cropBox.offsetHeight;
+
+    let left = (devCenterRelX + (cropAnchor.relX || 0)) - targetW / 2;
+    let top = (devCenterRelY + (cropAnchor.relY || 0)) - targetH / 2;
+
+    left = Math.max(0, Math.min(vpRect.width - targetW, left));
+    top = Math.max(0, Math.min(vpRect.height - targetH, top));
+
+    cropBox.style.width = `${Math.round(targetW)}px`;
+    cropBox.style.height = `${Math.round(targetH)}px`;
+    cropBox.style.left = `${Math.round(left)}px`;
+    cropBox.style.top = `${Math.round(top)}px`;
+
+    syncRecordingCropFrame();
   }
 
   function syncRecordingCropFrame() {
@@ -781,6 +827,23 @@
       isDraggingCrop = false;
       cropBox.classList.remove('dragging');
       try { cropBox.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      if (deviceWrapper && canvasViewport) {
+        const vpRect = canvasViewport.getBoundingClientRect();
+        const devRect = deviceWrapper.getBoundingClientRect();
+        const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
+        const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
+        const boxCenterX = (parseFloat(cropBox.style.left) || 0) + cropBox.offsetWidth / 2;
+        const boxCenterY = (parseFloat(cropBox.style.top) || 0) + cropBox.offsetHeight / 2;
+
+        cropAnchor = {
+          isSnapped: false,
+          relX: boxCenterX - devCenterRelX,
+          relY: boxCenterY - devCenterRelY,
+          width: cropBox.offsetWidth,
+          height: cropBox.offsetHeight
+        };
+      }
     };
 
     cropBox.addEventListener('pointerup', endDrag);
@@ -903,6 +966,23 @@
       activeResizeHandle = null;
       cropBox.classList.remove('resizing');
       try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      if (deviceWrapper && canvasViewport) {
+        const vpRect = canvasViewport.getBoundingClientRect();
+        const devRect = deviceWrapper.getBoundingClientRect();
+        const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
+        const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
+        const boxCenterX = (parseFloat(cropBox.style.left) || 0) + cropBox.offsetWidth / 2;
+        const boxCenterY = (parseFloat(cropBox.style.top) || 0) + cropBox.offsetHeight / 2;
+
+        cropAnchor = {
+          isSnapped: false,
+          relX: boxCenterX - devCenterRelX,
+          relY: boxCenterY - devCenterRelY,
+          width: cropBox.offsetWidth,
+          height: cropBox.offsetHeight
+        };
+      }
     };
 
     handle.addEventListener('pointerup', endResize);
@@ -1157,8 +1237,26 @@
         },
         audio: true,
         preferCurrentTab: true,
-        selfBrowserSurface: 'include'
+        selfBrowserSurface: 'include',
+        surfaceSwitching: 'exclude'
       });
+
+      // Crucial: Wait for browser's sharing infobar layout shift to settle in the DOM
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      // Dynamically realign crop frame so it pixel-perfectly locks to the device's post-shift position!
+      realignCropToDevice();
+
+      // Update activeCropRect bounds for canvas fallback
+      if (recordingCropFrame) {
+        const boxRect = recordingCropFrame.getBoundingClientRect();
+        activeCropRect = {
+          left: boxRect.left,
+          top: boxRect.top,
+          width: boxRect.width,
+          height: boxRect.height
+        };
+      }
 
       isNativeCropActive = false;
       let finalStreamToRecord = rawDisplayStream;
@@ -1315,6 +1413,19 @@
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
 
+      // Setup dynamic ResizeObserver so the crop continuously follows the phone if window or infobar changes
+      if (window.ResizeObserver && canvasViewport) {
+        if (recordingResizeObserver) recordingResizeObserver.disconnect();
+        recordingResizeObserver = new ResizeObserver(() => {
+          if (!isRecording) return;
+          realignCropToDevice();
+          if (!isNativeCropActive) {
+            updateCropParameters();
+          }
+        });
+        recordingResizeObserver.observe(canvasViewport);
+      }
+
       // Only start canvas render loop if native CropTarget is NOT active
       if (!isNativeCropActive) {
         startRenderLoop();
@@ -1340,6 +1451,11 @@
     if (!isRecording) return;
     isRecording = false;
     activeCropRect = null;
+
+    if (recordingResizeObserver) {
+      recordingResizeObserver.disconnect();
+      recordingResizeObserver = null;
+    }
 
     stopRenderLoop();
 
