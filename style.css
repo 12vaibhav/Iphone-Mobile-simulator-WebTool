@@ -1137,6 +1137,17 @@ body.fullscreen-mode .canvas-viewport {
   width: 100vw !important;
 }
 
+/* Native Region Capture 9:16 Crop Target Frame (Zero Overhead) */
+.recording-crop-frame {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  visibility: visible;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
 /* =========================================================
    9:16 Interactive Crop Viewfinder Overlay
    ========================================================= */

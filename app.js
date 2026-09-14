@@ -52,6 +52,7 @@
   const recordingTimer = document.getElementById('recordingTimer');
 
   // 9:16 Interactive Crop Viewfinder Elements
+  const recordingCropFrame = document.getElementById('recordingCropFrame');
   const cropOverlayContainer = document.getElementById('cropOverlayContainer');
   const cropBox = document.getElementById('cropBox');
   const cropGrid = document.getElementById('cropGrid');
@@ -687,8 +688,21 @@
     cropBox.style.left = `${Math.round(left)}px`;
     cropBox.style.top = `${Math.round(top)}px`;
 
+    syncRecordingCropFrame();
     updateCropDimensionsUI();
     checkActionBarFlip();
+  }
+
+  function syncRecordingCropFrame() {
+    if (!recordingCropFrame || !cropBox) return;
+    if (!cropBox.style.width || parseFloat(cropBox.style.width) === 0) {
+      snapCropToDevice();
+      return;
+    }
+    recordingCropFrame.style.width = cropBox.style.width;
+    recordingCropFrame.style.height = cropBox.style.height;
+    recordingCropFrame.style.left = cropBox.style.left;
+    recordingCropFrame.style.top = cropBox.style.top;
   }
 
   function updateCropDimensionsUI() {
@@ -758,6 +772,7 @@
       cropBox.style.left = `${Math.round(newLeft)}px`;
       cropBox.style.top = `${Math.round(newTop)}px`;
 
+      syncRecordingCropFrame();
       checkActionBarFlip();
     });
 
@@ -878,6 +893,7 @@
       cropBox.style.left = `${Math.round(newLeft)}px`;
       cropBox.style.top = `${Math.round(newTop)}px`;
 
+      syncRecordingCropFrame();
       updateCropDimensionsUI();
       checkActionBarFlip();
     });
@@ -915,7 +931,8 @@
       e.stopPropagation();
       if (!cropBox) return;
 
-      // Calculate inner bounds of cropBox (excluding outer border) in viewport client coordinates
+      syncRecordingCropFrame();
+
       const boxRect = cropBox.getBoundingClientRect();
       activeCropRect = {
         left: boxRect.left + 2,
@@ -1127,7 +1144,8 @@
 
     try {
       updateCachedRect();
-      wasCropped916 = !!activeCropRect;
+      syncRecordingCropFrame();
+      wasCropped916 = true;
 
       // Pure 30 FPS display capture to match VP9 encoding rate with 0 frame conversions
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -1144,25 +1162,26 @@
 
       isNativeCropActive = false;
       let finalStreamToRecord = rawDisplayStream;
+      const [videoTrack] = rawDisplayStream.getVideoTracks();
 
-      // 1. Try Native Hardware Region Capture (CropTarget API - only if NOT in custom 9:16 crop mode)
-      if (!activeCropRect && window.CropTarget && typeof CropTarget.fromElement === 'function') {
+      // 1. High-Performance Zero-Overhead Native GPU Region Capture (CropTarget API)
+      if (window.CropTarget && typeof CropTarget.fromElement === 'function' && videoTrack && typeof videoTrack.cropTo === 'function') {
         try {
-          const cropTarget = await CropTarget.fromElement(deviceWrapper);
-          const [videoTrack] = rawDisplayStream.getVideoTracks();
-          if (videoTrack && typeof videoTrack.cropTo === 'function') {
-            await videoTrack.cropTo(cropTarget);
-            isNativeCropActive = true;
-            finalStreamToRecord = rawDisplayStream;
-            console.log('Zero-overhead native CropTarget active');
-          }
+          const targetEl = (recordingCropFrame && parseFloat(recordingCropFrame.style.width) > 0)
+            ? recordingCropFrame
+            : deviceWrapper;
+          const cropTarget = await CropTarget.fromElement(targetEl);
+          await videoTrack.cropTo(cropTarget);
+          isNativeCropActive = true;
+          finalStreamToRecord = rawDisplayStream;
+          console.log('Zero-overhead native GPU CropTarget active');
         } catch (cropErr) {
-          console.log('Region capture fallback to ultra-light canvas:', cropErr);
+          console.warn('Native CropTarget failed, falling back to canvas capture:', cropErr);
           isNativeCropActive = false;
         }
       }
 
-      // 2. Ultra-Light Hardware Canvas Capture (Used for 9:16 Crop Box)
+      // 2. Fallback Canvas Capture (Only for non-supporting browsers or non-tab shares)
       if (!isNativeCropActive) {
         if (!helperVideo) {
           helperVideo = document.createElement('video');
@@ -1237,8 +1256,8 @@
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        // 2.5 Mbps: Optimal sweet-spot for VP9 1080p, guarantees real-time CPU encoding with 0 dropped frames
-        videoBitsPerSecond: 2500000
+        // Pristine 8 Mbps bitrate for razor-sharp Full HD clarity with 0 dropped frames
+        videoBitsPerSecond: 8000000
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -1283,21 +1302,23 @@
       };
 
       // Handle user ending sharing from browser system bar
-      const videoTrack = rawDisplayStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.onended = () => {
+      const activeVideoTrack = rawDisplayStream.getVideoTracks()[0];
+      if (activeVideoTrack) {
+        activeVideoTrack.onended = () => {
           if (isRecording) stopScreenRecording();
         };
       }
 
-      // Set recording flag and start the active frame drawing loop
+      // Set recording flag
       isRecording = true;
       recordBtn.classList.add('recording');
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
 
-      // Immediately paint initial frame and start 30 FPS rendering loop
-      startRenderLoop();
+      // Only start canvas render loop if native CropTarget is NOT active
+      if (!isNativeCropActive) {
+        startRenderLoop();
+      }
 
       // Continuous recording without timeslice pauses for seamless encoding
       mediaRecorder.start();
