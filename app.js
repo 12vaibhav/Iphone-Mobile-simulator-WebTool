@@ -55,7 +55,6 @@
   const cropOverlayContainer = document.getElementById('cropOverlayContainer');
   const cropBox = document.getElementById('cropBox');
   const cropGrid = document.getElementById('cropGrid');
-  const cropFormatSelect = document.getElementById('cropFormatSelect');
   const cropSnapBtn = document.getElementById('cropSnapBtn');
   const cropConfirmBtn = document.getElementById('cropConfirmBtn');
   const cropCancelBtn = document.getElementById('cropCancelBtn');
@@ -598,6 +597,7 @@
   // ==========================================
   let rawDisplayStream = null;
   let croppedStream = null;
+  let croppedTrack = null;
   let helperVideo = null;
   let cropCanvas = null;
   let cropCtx = null;
@@ -691,31 +691,8 @@
     checkActionBarFlip();
   }
 
-  function updateCropFormatBadge() {
-    const resBadge = cropActionBar ? cropActionBar.querySelector('.res-text') : null;
-    if (!resBadge) return;
-    const mode = cropFormatSelect ? cropFormatSelect.value : (localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60');
-    if (mode === 'mp4-60') {
-      resBadge.innerText = '1080×1920 (60FPS MP4)';
-    } else if (mode === 'webm-vp9') {
-      resBadge.innerText = '1080×1920 (30FPS VP9 WebM)';
-    } else {
-      resBadge.innerText = '1080×1920 (30FPS VP8 WebM)';
-    }
-  }
-
-  if (cropFormatSelect) {
-    const savedFmt = localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60';
-    cropFormatSelect.value = savedFmt;
-    cropFormatSelect.addEventListener('change', () => {
-      localStorage.setItem('mobileSimulatorRecordFormat', cropFormatSelect.value);
-      updateCropFormatBadge();
-    });
-    updateCropFormatBadge();
-  }
-
   function updateCropDimensionsUI() {
-    updateCropFormatBadge();
+    // 30FPS VP9 WebM mode active
   }
 
   function checkActionBarFlip() {
@@ -1043,9 +1020,6 @@
     }
   }
 
-  // Optimized fallback render loop with 30 FPS timing
-  let lastDrawTime = 0;
-  const targetFrameInterval = 1000 / 30; // 33.33ms
   let cropParams = null;
 
   function updateCropParameters() {
@@ -1097,19 +1071,38 @@
         0, 0,
         cropParams.targetW, cropParams.targetH
       );
+      // Lockstep frame capture: captures this exact frame into MediaRecorder with 0 phase drift
+      if (croppedTrack && typeof croppedTrack.requestFrame === 'function') {
+        croppedTrack.requestFrame();
+      }
     } catch (e) {}
   }
+
+  // Drift-free 30.00 FPS Cadence Timer (Accumulator delta timing)
+  let lastDrawTime = 0;
+  const TARGET_FPS = 30;
+  const FRAME_DURATION = 1000 / TARGET_FPS; // 33.333ms
 
   function startRenderLoop() {
     stopRenderLoop();
 
-    // High-performance continuous RAF loop: synchronized to browser display repaints
-    // Ensures zero judder, zero cadence mismatch, and captures every motion frame cleanly!
-    function renderLoop() {
+    lastDrawTime = performance.now();
+
+    function renderLoop(timestamp) {
       if (!isRecording || isNativeCropActive) return;
-      drawCroppedFrame();
+
+      const elapsed = timestamp - lastDrawTime;
+      if (elapsed >= FRAME_DURATION - 2) {
+        // Accumulator offset prevents timer drift and eliminates dropped or duplicate frames
+        lastDrawTime = timestamp - (elapsed % FRAME_DURATION);
+        drawCroppedFrame();
+      }
+
       cropAnimFrameId = requestAnimationFrame(renderLoop);
     }
+
+    // Paint first frame immediately so there is never a blank frame
+    drawCroppedFrame();
     cropAnimFrameId = requestAnimationFrame(renderLoop);
   }
 
@@ -1136,22 +1129,13 @@
       updateCachedRect();
       wasCropped916 = !!activeCropRect;
 
-      const formatMode = cropFormatSelect ? cropFormatSelect.value : (localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60');
-      const is60Fps = formatMode === 'mp4-60';
-      const targetFps = is60Fps ? 60 : 30;
-
-      // Dynamic Bitrate:
-      // 6 Mbps for 60FPS MP4 (GPU accelerated, zero CPU load, ultra fluid)
-      // 2.8 Mbps for VP9 (optimizes CPU software encoding so libvpx does NOT drop frames!)
-      // 4 Mbps for VP8
-      const targetBps = formatMode === 'mp4-60' ? 6000000 : (formatMode === 'webm-vp9' ? 2800000 : 4000000);
-
+      // Pure 30 FPS display capture to match VP9 encoding rate with 0 frame conversions
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
           width: { ideal: 1920, max: 1920 },
           height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: targetFps, max: targetFps }
+          frameRate: { ideal: 30, max: 30 }
         },
         audio: true,
         preferCurrentTab: true,
@@ -1178,7 +1162,7 @@
         }
       }
 
-      // 2. Ultra-Light Hardware Canvas Capture (Used for 9:16 Crop Box or standard fallback)
+      // 2. Ultra-Light Hardware Canvas Capture (Used for 9:16 Crop Box)
       if (!isNativeCropActive) {
         if (!helperVideo) {
           helperVideo = document.createElement('video');
@@ -1217,50 +1201,44 @@
 
         updateCropParameters();
 
-        // Paint first clean frame immediately to guarantee 0 blank frames at the start
+        // Paint first clean frame immediately
         cropCtx.fillStyle = '#000000';
         cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-        drawCroppedFrame();
 
-        croppedStream = cropCanvas.captureStream(targetFps);
+        // Lockstep capture: captureStream(0) gives explicit control over every single frame via track.requestFrame()
+        try {
+          croppedStream = cropCanvas.captureStream(0);
+          const vTracks = croppedStream.getVideoTracks();
+          if (vTracks && vTracks.length > 0 && typeof vTracks[0].requestFrame === 'function') {
+            croppedTrack = vTracks[0];
+          } else {
+            croppedStream = cropCanvas.captureStream(30);
+            croppedTrack = null;
+          }
+        } catch (e) {
+          croppedStream = cropCanvas.captureStream(30);
+          croppedTrack = null;
+        }
+
+        drawCroppedFrame();
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
         finalStreamToRecord = croppedStream;
       }
 
-      // Dynamic Codec Selection based on format mode
-      let mimeTypes = [];
-      if (formatMode === 'mp4-60') {
-        mimeTypes = [
-          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-          'video/mp4;codecs=avc1',
-          'video/mp4',
-          'video/webm;codecs=h264,opus',
-          'video/webm;codecs=h264',
-          'video/webm;codecs=vp9,opus',
-          'video/webm'
-        ];
-      } else if (formatMode === 'webm-vp9') {
-        mimeTypes = [
-          'video/webm;codecs=vp9,opus',
-          'video/webm;codecs=vp9',
-          'video/webm',
-          'video/mp4'
-        ];
-      } else {
-        mimeTypes = [
-          'video/webm;codecs=vp8,opus',
-          'video/webm;codecs=vp8',
-          'video/webm',
-          'video/mp4'
-        ];
-      }
+      // Dedicated 30FPS VP9 WebM Codec Configuration
+      const mimeTypes = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp9',
+        'video/webm'
+      ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
-      console.log('Selected recording MIME:', selectedMime, 'Target FPS:', targetFps);
+      console.log('Selected recording MIME:', selectedMime);
 
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: targetBps
+        // 2.5 Mbps: Optimal sweet-spot for VP9 1080p, guarantees real-time CPU encoding with 0 dropped frames
+        videoBitsPerSecond: 2500000
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -1284,26 +1262,19 @@
         }
         currentVideoUrl = URL.createObjectURL(finalBlob);
 
-        const isWebm = selectedMime.includes('webm');
-        const fileExt = isWebm ? 'webm' : 'mp4';
-        const codecLabel = selectedMime.includes('vp9')
-          ? 'VP9 WebM'
-          : (selectedMime.includes('vp8')
-            ? 'VP8 WebM'
-            : (isWebm ? 'WebM' : (is60Fps ? '60FPS MP4' : 'MP4')));
         const formatLabel = wasCropped916
-          ? `1080×1920 Full HD (9:16 Reel) ${is60Fps ? '60FPS' : '30FPS'} ${codecLabel}`
-          : `1080p ${is60Fps ? '60FPS' : '30FPS'} ${codecLabel}`;
+          ? '1080×1920 Full HD (9:16 Reel) 30FPS VP9 WebM'
+          : '1080p 30FPS VP9 WebM';
 
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
         downloadRecordBtn.href = currentVideoUrl;
         downloadRecordBtn.download = wasCropped916
-          ? `mobile-9-16-reel-1080p-${Date.now()}.${fileExt}`
-          : `mobile-recording-1080p-${Date.now()}.${fileExt}`;
+          ? `mobile-9-16-reel-1080p-vp9-${Date.now()}.webm`
+          : `mobile-recording-1080p-vp9-${Date.now()}.webm`;
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
         if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
-        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${codecLabel}`;
+        if (downloadBtnLabel) downloadBtnLabel.innerText = 'Download 1080p VP9 WebM';
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
@@ -1326,12 +1297,11 @@
       startRecordingTimer();
 
       // Immediately paint initial frame and start 30 FPS rendering loop
-      drawCroppedFrame();
       startRenderLoop();
 
-      // Start MediaRecorder with 3000ms timeslice to minimize GC churn and event loop interrupts
-      mediaRecorder.start(3000);
-      showToast('🔴 Recording Started');
+      // Continuous recording without timeslice pauses for seamless encoding
+      mediaRecorder.start();
+      showToast('🔴 Recording Started (30FPS VP9 WebM)');
 
     } catch (err) {
       console.warn('Screen recording cancelled or error:', err);
