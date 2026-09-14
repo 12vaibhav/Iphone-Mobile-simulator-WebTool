@@ -913,7 +913,6 @@ html, body {
 }
 
 .download-btn:hover {
-  background: #f0b54d;
   transform: translateY(-1px);
 }
 

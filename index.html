@@ -274,7 +274,7 @@
         <div class="crop-action-bar" id="cropActionBar">
           <div class="crop-ratio-badge">
             <span class="ratio-text">9:16 Reel</span>
-            <span class="res-text">1080×1920 (30FPS VP9 WebM)</span>
+            <span class="res-text" id="cropResBadge">1080×1920 (30FPS VP9 WebM)</span>
           </div>
           <button type="button" class="crop-action-btn snap-btn" id="cropSnapBtn" title="Center and wrap 9:16 box around iPhone">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -349,6 +349,8 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <!-- Fix WebM Duration -->
+  <script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

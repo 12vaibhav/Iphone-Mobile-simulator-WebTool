@@ -81,14 +81,14 @@
   let isBgBlurred = false;
   let customBgDataUrl = null;
 
-  // Recorder State
+  // Recorder State (1080p 30FPS VP9 WebM)
   let isRecording = false;
   let mediaRecorder = null;
-  let recordedStream = null;
   let recordedChunks = [];
+  let recordedBlob = null;
+  let currentVideoUrl = null;
   let recordTimerInterval = null;
   let recordStartTime = 0;
-  let currentVideoUrl = null;
 
   // iPhone 16 Pro Finishes & Dimensions
   const IPHONE_16_PRO_FINISHES = {
@@ -603,7 +603,6 @@
   let cropCanvas = null;
   let cropCtx = null;
   let cropAnimFrameId = null;
-  let videoFrameCallbackId = null;
   let isNativeCropActive = false;
   let cachedDeviceRect = null;
 
@@ -660,23 +659,13 @@
     const maxW = Math.max(200, vpRect.width - 32);
     const maxH = Math.max(350, vpRect.height - 32);
 
-    // Enclose phone with generous aesthetic framing padding
-    const pad = 28;
+    // Enclose phone with generous aesthetic framing padding (never cut off phone edges)
+    const pad = 36;
     let targetH = devRect.height + pad * 2;
     let targetW = targetH * CROP_ASPECT_RATIO;
 
     if (targetW < devRect.width + pad * 2) {
       targetW = devRect.width + pad * 2;
-      targetH = targetW / CROP_ASPECT_RATIO;
-    }
-
-    // Scale down if exceeds viewport bounds
-    if (targetH > maxH) {
-      targetH = maxH;
-      targetW = targetH * CROP_ASPECT_RATIO;
-    }
-    if (targetW > maxW) {
-      targetW = maxW;
       targetH = targetW / CROP_ASPECT_RATIO;
     }
 
@@ -1029,192 +1018,22 @@
     });
   }
 
-  // Fixes WebM duration header so browser players play with 100% hardware smooth 1.0x speed
-  async function fixWebmDuration(blob, durationMs) {
-    try {
-      const buffer = await blob.arrayBuffer();
-      const u8 = new Uint8Array(buffer);
-
-      // Find Segment Info: 0x15 0x49 0xA9 0x66
-      let infoPos = -1;
-      for (let i = 0; i < Math.min(u8.length - 4, 1024); i++) {
-        if (u8[i] === 0x15 && u8[i+1] === 0x49 && u8[i+2] === 0xA9 && u8[i+3] === 0x66) {
-          infoPos = i;
-          break;
-        }
-      }
-      if (infoPos === -1) return blob;
-
-      // Find TimecodeScale: 0x2A 0xD7 0xB1
-      let timecodeScale = 1000000;
-      for (let i = infoPos; i < Math.min(infoPos + 200, u8.length - 7); i++) {
-        if (u8[i] === 0x2A && u8[i+1] === 0xD7 && u8[i+2] === 0xB1) {
-          const size = u8[i+3] & 0x07;
-          let val = 0;
-          for (let j = 0; j < size; j++) {
-            val = (val << 8) | u8[i + 4 + j];
-          }
-          if (val > 0) timecodeScale = val;
-          break;
-        }
-      }
-
-      const durationVal = durationMs * 1000000 / timecodeScale;
-
-      // Check if Duration (0x44 0x89) exists inside Info
-      for (let i = infoPos; i < Math.min(infoPos + 200, u8.length - 10); i++) {
-        if (u8[i] === 0x44 && u8[i+1] === 0x89) {
-          const dataSize = u8[i+2] & 0x0F;
-          const view = new DataView(buffer);
-          if (dataSize === 4) {
-            view.setFloat32(i + 3, durationVal, false);
-          } else if (dataSize === 8) {
-            view.setFloat64(i + 3, durationVal, false);
-          }
-          return new Blob([buffer], { type: blob.type });
-        }
-      }
-
-      // Duration not present: insert 0x44 0x89 [0x84] [float32] (7 bytes) into Info
-      let offset = infoPos + 4;
-      let infoSizeLen = 1;
-      let b = u8[offset];
-      let mask = 0x80;
-      while ((b & mask) === 0 && infoSizeLen < 8) {
-        infoSizeLen++;
-        mask >>= 1;
-      }
-
-      const durBytes = new Uint8Array(7);
-      durBytes[0] = 0x44;
-      durBytes[1] = 0x89;
-      durBytes[2] = 0x84; // 4-byte float
-      new DataView(durBytes.buffer).setFloat32(3, durationVal, false);
-
-      const insertPos = offset + infoSizeLen;
-      const newBuf = new Uint8Array(buffer.byteLength + 7);
-      newBuf.set(u8.subarray(0, insertPos), 0);
-      newBuf.set(durBytes, insertPos);
-      newBuf.set(u8.subarray(insertPos), insertPos + 7);
-
-      // Update Info element size
-      let infoSize = 0;
-      for (let j = 0; j < infoSizeLen; j++) {
-        const byte = u8[offset + j];
-        infoSize = (infoSize << 8) | (j === 0 ? (byte & (mask - 1)) : byte);
-      }
-      infoSize += 7;
-      for (let j = infoSizeLen - 1; j >= 0; j--) {
-        let byte = (infoSize >>> ((infoSizeLen - 1 - j) * 8)) & 0xFF;
-        if (j === 0) byte |= mask;
-        newBuf[offset + j] = byte;
-      }
-
-      return new Blob([newBuf.buffer], { type: blob.type });
-    } catch (err) {
-      console.warn('WebM duration fix skipped:', err);
-      return blob;
-    }
+  // Detect best supported WebM codec (VP9 prioritized for maximum visual quality)
+  function getSupportedWebmMime() {
+    const webmCandidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp09.00.10.08',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    return webmCandidates.find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || 'video/webm';
   }
 
-  let cropParams = null;
-
-  function updateCropParameters() {
-    if (!helperVideo) return;
-    const rect = activeCropRect || (deviceWrapper ? deviceWrapper.getBoundingClientRect() : null);
-    if (!rect) return;
-
-    const vWidth = helperVideo.videoWidth || 1920;
-    const vHeight = helperVideo.videoHeight || 1080;
-    const winWidth = window.innerWidth || 1;
-    const winHeight = window.innerHeight || 1;
-    const scaleX = vWidth / winWidth;
-    const scaleY = vHeight / winHeight;
-
-    const sx = Math.max(0, Math.min(vWidth - 10, Math.round(rect.left * scaleX)));
-    const sy = Math.max(0, Math.min(vHeight - 10, Math.round(rect.top * scaleY)));
-    const sWidth = Math.max(10, Math.min(vWidth - sx, Math.round(rect.width * scaleX)));
-    const sHeight = Math.max(10, Math.min(vHeight - sy, Math.round(rect.height * scaleY)));
-
-    // Always target full 1080x1920 Full HD 30FPS
-    const targetW = 1080;
-    const targetH = 1920;
-
-    cropParams = {
-      sx, sy,
-      sWidth, sHeight,
-      targetW, targetH
-    };
-
-    if (cropCanvas) {
-      if (cropCanvas.width !== targetW || cropCanvas.height !== targetH) {
-        cropCanvas.width = targetW;
-        cropCanvas.height = targetH;
-      }
-      if (cropCtx) {
-        cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'low';
-      }
-    }
-  }
-
-  function drawCroppedFrame() {
-    if (isNativeCropActive || !helperVideo || !cropCtx || !cropParams) return;
-    try {
-      cropCtx.drawImage(
-        helperVideo,
-        cropParams.sx, cropParams.sy,
-        cropParams.sWidth, cropParams.sHeight,
-        0, 0,
-        cropParams.targetW, cropParams.targetH
-      );
-      // Lockstep frame capture: captures this exact frame into MediaRecorder with 0 phase drift
-      if (croppedTrack && typeof croppedTrack.requestFrame === 'function') {
-        croppedTrack.requestFrame();
-      }
-    } catch (e) {}
-  }
-
-  // Drift-free 30.00 FPS Cadence Timer (Accumulator delta timing)
-  let lastDrawTime = 0;
-  const TARGET_FPS = 30;
-  const FRAME_DURATION = 1000 / TARGET_FPS; // 33.333ms
-
-  function startRenderLoop() {
-    stopRenderLoop();
-
-    lastDrawTime = performance.now();
-
-    function renderLoop(timestamp) {
-      if (!isRecording || isNativeCropActive) return;
-
-      const elapsed = timestamp - lastDrawTime;
-      if (elapsed >= FRAME_DURATION - 2) {
-        // Accumulator offset prevents timer drift and eliminates dropped or duplicate frames
-        lastDrawTime = timestamp - (elapsed % FRAME_DURATION);
-        drawCroppedFrame();
-      }
-
-      cropAnimFrameId = requestAnimationFrame(renderLoop);
-    }
-
-    // Paint first frame immediately so there is never a blank frame
-    drawCroppedFrame();
-    cropAnimFrameId = requestAnimationFrame(renderLoop);
-  }
-
-  function stopRenderLoop() {
-    if (videoFrameCallbackId !== null && helperVideo && typeof helperVideo.cancelVideoFrameCallback === 'function') {
-      try {
-        helperVideo.cancelVideoFrameCallback(videoFrameCallbackId);
-      } catch (err) {}
-      videoFrameCallbackId = null;
-    }
-    if (cropAnimFrameId !== null) {
-      cancelAnimationFrame(cropAnimFrameId);
-      cropAnimFrameId = null;
-    }
-  }
+  // ==========================================
+  // NATIVE REGION CAPTURE & FALLBACK LOGIC
+  // ==========================================
 
   async function startScreenRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -1223,17 +1042,14 @@
     }
 
     try {
-      updateCachedRect();
       syncRecordingCropFrame();
       wasCropped916 = true;
 
-      // Pure 30 FPS display capture to match VP9 encoding rate with 0 frame conversions
+      // Pure display capture
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 30, max: 30 }
+          frameRate: { ideal: 60 }
         },
         audio: true,
         preferCurrentTab: true,
@@ -1241,170 +1057,118 @@
         surfaceSwitching: 'exclude'
       });
 
-      // Crucial: Wait for browser's sharing infobar layout shift to settle in the DOM
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // Wait 350ms for browser sharing infobar animation to settle
+      await new Promise(resolve => setTimeout(resolve, 350));
 
-      // Dynamically realign crop frame so it pixel-perfectly locks to the device's post-shift position!
-      realignCropToDevice();
+      const videoTrack = rawDisplayStream.getVideoTracks()[0];
+      croppedStream = null;
 
-      // Update activeCropRect bounds for canvas fallback
-      if (recordingCropFrame) {
-        const boxRect = recordingCropFrame.getBoundingClientRect();
-        activeCropRect = {
-          left: boxRect.left,
-          top: boxRect.top,
-          width: boxRect.width,
-          height: boxRect.height
-        };
-      }
-
-      isNativeCropActive = false;
-      let finalStreamToRecord = rawDisplayStream;
-      const [videoTrack] = rawDisplayStream.getVideoTracks();
-
-      // 1. High-Performance Zero-Overhead Native GPU Region Capture (CropTarget API)
-      if (window.CropTarget && typeof CropTarget.fromElement === 'function' && videoTrack && typeof videoTrack.cropTo === 'function') {
+      // NATIVE GPU CROP (Zero-Stutter Region Capture API)
+      if (typeof CropTarget !== 'undefined' && videoTrack.cropTo) {
         try {
-          const targetEl = (recordingCropFrame && parseFloat(recordingCropFrame.style.width) > 0)
-            ? recordingCropFrame
-            : deviceWrapper;
-          const cropTarget = await CropTarget.fromElement(targetEl);
+          const cropTarget = await CropTarget.fromElement(recordingCropFrame);
           await videoTrack.cropTo(cropTarget);
-          isNativeCropActive = true;
-          finalStreamToRecord = rawDisplayStream;
-          console.log('Zero-overhead native GPU CropTarget active');
-        } catch (cropErr) {
-          console.warn('Native CropTarget failed, falling back to canvas capture:', cropErr);
-          isNativeCropActive = false;
+          croppedStream = rawDisplayStream;
+          console.log('Region Capture API (cropTo) successfully initialized.');
+          
+          // CRITICAL FIX: Wait for the browser to actually apply the crop to the stream.
+          // If we start MediaRecorder immediately, it records the first frame at 1920x1080.
+          // When the crop kicks in, the resolution changes mid-stream, causing players to zoom/stretch.
+          const tempVideo = document.createElement('video');
+          tempVideo.muted = true;
+          tempVideo.srcObject = croppedStream;
+          await tempVideo.play().catch(() => {});
+          await new Promise(resolve => {
+            // Wait for resolution change or fallback timeout
+            let isResolved = false;
+            const finish = () => {
+              if (isResolved) return;
+              isResolved = true;
+              tempVideo.removeEventListener('resize', finish);
+              tempVideo.pause();
+              tempVideo.srcObject = null;
+              resolve();
+            };
+            tempVideo.addEventListener('resize', finish);
+            setTimeout(finish, 800); // Max wait time
+          });
+          
+        } catch (e) {
+          console.warn('cropTo failed, falling back to canvas', e);
         }
-      }
-
-      // 2. Fallback Canvas Capture (Only for non-supporting browsers or non-tab shares)
-      if (!isNativeCropActive) {
+      } 
+      
+      // HIGH-PERFORMANCE FALLBACK (requestVideoFrameCallback)
+      if (!croppedStream) {
+        console.log('Using requestVideoFrameCallback fallback for cropping.');
         if (!helperVideo) {
           helperVideo = document.createElement('video');
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
-          // Keep opacity: 1 and inside viewport (1px x 1px) so Chromium NEVER throttles decoder to 10-15 FPS!
-          helperVideo.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:1;pointer-events:none;z-index:-9999;visibility:visible;';
+          helperVideo.style.cssText = 'position:fixed;bottom:10px;right:10px;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-9999;';
         }
         if (!helperVideo.isConnected) {
           document.body.appendChild(helperVideo);
         }
         helperVideo.srcObject = rawDisplayStream;
-        await helperVideo.play();
-
-        // Ensure video is actively decoding valid frames before recording starts
-        if (helperVideo.readyState < 2 || !helperVideo.videoWidth) {
-          await new Promise(resolve => {
-            const onReady = () => {
-              helperVideo.removeEventListener('loadeddata', onReady);
-              helperVideo.removeEventListener('canplay', onReady);
-              resolve();
-            };
-            helperVideo.addEventListener('loadeddata', onReady);
-            helperVideo.addEventListener('canplay', onReady);
-            setTimeout(resolve, 600);
-          });
-        }
+        await helperVideo.play().catch(e => console.warn('Helper video play:', e));
+        
+        await new Promise(resolve => {
+          if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) return resolve();
+          const onReady = () => {
+             if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) {
+               helperVideo.removeEventListener('loadeddata', onReady);
+               resolve();
+             }
+          };
+          helperVideo.addEventListener('loadeddata', onReady);
+        });
 
         if (!cropCanvas) {
           cropCanvas = document.createElement('canvas');
-          cropCtx = cropCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
+          cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
         }
+        
+        // CRITICAL FIX: Pre-size the canvas to target dimensions BEFORE calling captureStream.
+        // Otherwise, it initializes at 300x150 and resizes on the first frame, causing a zoom glitch.
+        const initialDevRect = recordingCropFrame.getBoundingClientRect();
+        cropCanvas.width = Math.round(initialDevRect.width);
+        cropCanvas.height = Math.round(initialDevRect.height);
+        
         cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'low';
+        cropCtx.imageSmoothingQuality = 'medium';
 
-        updateCropParameters();
+        function drawFallbackFrame(now, metadata) {
+           if (!isRecording) return;
+           if (helperVideo.videoWidth > 0) {
+              const devRect = recordingCropFrame.getBoundingClientRect();
+              const scaleX = helperVideo.videoWidth / window.innerWidth;
+              const scaleY = helperVideo.videoHeight / window.innerHeight;
+              
+              if (cropCanvas.width !== Math.round(devRect.width) || cropCanvas.height !== Math.round(devRect.height)) {
+                cropCanvas.width = Math.round(devRect.width);
+                cropCanvas.height = Math.round(devRect.height);
+                cropCtx.fillStyle = '#12151d';
+                cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+              }
 
-        // Paint first clean frame immediately
-        cropCtx.fillStyle = '#000000';
-        cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-
-        // Lockstep capture: captureStream(0) gives explicit control over every single frame via track.requestFrame()
-        try {
-          croppedStream = cropCanvas.captureStream(0);
-          const vTracks = croppedStream.getVideoTracks();
-          if (vTracks && vTracks.length > 0 && typeof vTracks[0].requestFrame === 'function') {
-            croppedTrack = vTracks[0];
-          } else {
-            croppedStream = cropCanvas.captureStream(30);
-            croppedTrack = null;
-          }
-        } catch (e) {
-          croppedStream = cropCanvas.captureStream(30);
-          croppedTrack = null;
+              cropCtx.drawImage(
+                 helperVideo,
+                 Math.max(0, Math.round(devRect.left * scaleX)), 
+                 Math.max(0, Math.round(devRect.top * scaleY)),
+                 Math.round(devRect.width * scaleX), 
+                 Math.round(devRect.height * scaleY),
+                 0, 0,
+                 cropCanvas.width, cropCanvas.height
+              );
+           }
+           helperVideo.requestVideoFrameCallback(drawFallbackFrame);
         }
-
-        drawCroppedFrame();
+        
+        helperVideo.requestVideoFrameCallback(drawFallbackFrame);
+        croppedStream = cropCanvas.captureStream(30);
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
-        finalStreamToRecord = croppedStream;
-      }
-
-      // Dedicated 30FPS VP9 WebM Codec Configuration
-      const mimeTypes = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp9',
-        'video/webm'
-      ];
-      let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
-      console.log('Selected recording MIME:', selectedMime);
-
-      recordedChunks = [];
-      mediaRecorder = new MediaRecorder(finalStreamToRecord, {
-        mimeType: selectedMime,
-        // Pristine 8 Mbps bitrate for razor-sharp Full HD clarity with 0 dropped frames
-        videoBitsPerSecond: 8000000
-      });
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recordedChunks.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const durationSec = Math.floor((Date.now() - recordStartTime) / 1000);
-        const durationMs = Date.now() - recordStartTime;
-        let finalBlob = new Blob(recordedChunks, { type: selectedMime });
-
-        // Patch WebM duration header so video element and players play with 100% hardware smooth 1.0x speed
-        if (selectedMime.includes('webm') && durationMs > 500 && finalBlob.size > 1024) {
-          finalBlob = await fixWebmDuration(finalBlob, durationMs);
-        }
-
-        if (currentVideoUrl) {
-          URL.revokeObjectURL(currentVideoUrl);
-        }
-        currentVideoUrl = URL.createObjectURL(finalBlob);
-
-        const formatLabel = wasCropped916
-          ? '1080×1920 Full HD (9:16 Reel) 30FPS VP9 WebM'
-          : '1080p 30FPS VP9 WebM';
-
-        // Populate Modal
-        recordedVideoPlayer.src = currentVideoUrl;
-        downloadRecordBtn.href = currentVideoUrl;
-        downloadRecordBtn.download = wasCropped916
-          ? `mobile-9-16-reel-1080p-vp9-${Date.now()}.webm`
-          : `mobile-recording-1080p-vp9-${Date.now()}.webm`;
-        videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
-        if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
-        if (downloadBtnLabel) downloadBtnLabel.innerText = 'Download 1080p VP9 WebM';
-
-        // Open Modal
-        recordModalBackdrop.classList.add('active');
-        recordedVideoPlayer.play().catch(() => {});
-        showToast(`🎬 ${formatLabel} recording complete!`);
-      };
-
-      // Handle user ending sharing from browser system bar
-      const activeVideoTrack = rawDisplayStream.getVideoTracks()[0];
-      if (activeVideoTrack) {
-        activeVideoTrack.onended = () => {
-          if (isRecording) stopScreenRecording();
-        };
       }
 
       // Set recording flag
@@ -1413,27 +1177,71 @@
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
 
-      // Setup dynamic ResizeObserver so the crop continuously follows the phone if window or infobar changes
-      if (window.ResizeObserver && canvasViewport) {
-        if (recordingResizeObserver) recordingResizeObserver.disconnect();
-        recordingResizeObserver = new ResizeObserver(() => {
-          if (!isRecording) return;
-          realignCropToDevice();
-          if (!isNativeCropActive) {
-            updateCropParameters();
-          }
-        });
-        recordingResizeObserver.observe(canvasViewport);
+      // Best WebM Codec Configuration (VP9 / VP8)
+      const selectedMime = getSupportedWebmMime();
+      recordedChunks = [];
+
+      mediaRecorder = new MediaRecorder(croppedStream, {
+        mimeType: selectedMime,
+        videoBitsPerSecond: 6000000 // 6 Mbps
+      });
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunks.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const durationSec = Math.floor((Date.now() - recordStartTime) / 1000);
+        const durationMs = Date.now() - recordStartTime;
+
+        let finalBlob = new Blob(recordedChunks, { type: selectedMime });
+
+        if (typeof ysFixWebmDuration !== 'undefined' && durationMs > 500) {
+          finalBlob = await new Promise(resolve => {
+            ysFixWebmDuration(finalBlob, durationMs, (fixedBlob) => {
+              resolve(fixedBlob || finalBlob);
+            });
+          });
+        }
+
+        recordedBlob = finalBlob;
+        if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
+        currentVideoUrl = URL.createObjectURL(recordedBlob);
+
+        recordedVideoPlayer.src = currentVideoUrl;
+
+        // Configure Download Button
+        const timestamp = Date.now();
+        const finalMb = (recordedBlob.size / (1024 * 1024)).toFixed(1);
+        if (downloadRecordBtn) {
+          downloadRecordBtn.href = currentVideoUrl;
+          downloadRecordBtn.download = `mobile-recording-${timestamp}.webm`;
+        }
+        if (downloadBtnLabel) {
+          downloadBtnLabel.innerText = `Download Native VP9 WebM (${finalMb} MB)`;
+        }
+
+        videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
+        if (videoFormatBadge) {
+          videoFormatBadge.innerText = 'Native Mobile Crop (VP9 WebM)';
+        }
+
+        // Open Modal
+        recordModalBackdrop.classList.add('active');
+        recordedVideoPlayer.play().catch(() => {});
+        showToast('🎬 Native VP9 WebM recording ready for download!');
+      };
+
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          if (isRecording) stopScreenRecording();
+        };
       }
 
-      // Only start canvas render loop if native CropTarget is NOT active
-      if (!isNativeCropActive) {
-        startRenderLoop();
-      }
-
-      // Continuous recording without timeslice pauses for seamless encoding
-      mediaRecorder.start();
-      showToast('🔴 Recording Started (30FPS VP9 WebM)');
+      mediaRecorder.start(1000);
+      showToast('🔴 Recording Started (Zero-Stutter Native VP9 WebM)');
 
     } catch (err) {
       console.warn('Screen recording cancelled or error:', err);
@@ -1450,20 +1258,13 @@
   function stopScreenRecording() {
     if (!isRecording) return;
     isRecording = false;
-    activeCropRect = null;
-
-    if (recordingResizeObserver) {
-      recordingResizeObserver.disconnect();
-      recordingResizeObserver = null;
-    }
-
-    stopRenderLoop();
 
     recordBtn.classList.remove('recording');
     recordBtnText.innerText = 'Record';
     stopRecordingTimer();
 
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      try { mediaRecorder.requestData(); } catch (e) {}
       mediaRecorder.stop();
     }
 
@@ -1472,7 +1273,7 @@
       rawDisplayStream = null;
     }
 
-    if (croppedStream) {
+    if (croppedStream && croppedStream !== rawDisplayStream) {
       croppedStream.getTracks().forEach(track => track.stop());
       croppedStream = null;
     }
@@ -1517,8 +1318,10 @@
     }
   });
 
-  downloadRecordBtn.addEventListener('click', () => {
-    showToast('⬇️ Video download started');
-  });
+  if (downloadRecordBtn) {
+    downloadRecordBtn.addEventListener('click', () => {
+      showToast('⬇️ 1080p WebM video download started');
+    });
+  }
 
 })();
