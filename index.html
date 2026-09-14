@@ -271,7 +271,14 @@
         <div class="crop-action-bar" id="cropActionBar">
           <div class="crop-ratio-badge">
             <span class="ratio-text">9:16 Reel</span>
-            <span class="res-text">1080×1920 (1080p 30FPS)</span>
+            <span class="res-text">1080×1920</span>
+          </div>
+          <div class="crop-format-wrap">
+            <select id="cropFormatSelect" class="crop-format-select" title="Choose Recording Codec & Framerate">
+              <option value="mp4-60">60FPS MP4 (Hardware GPU - Silky Smooth)</option>
+              <option value="webm-vp9">30FPS VP9 WebM (High Compression)</option>
+              <option value="webm-vp8">30FPS VP8 WebM (Standard WebM)</option>
+            </select>
           </div>
           <button type="button" class="crop-action-btn snap-btn" id="cropSnapBtn" title="Center and wrap 9:16 box around iPhone">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

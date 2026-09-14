@@ -55,7 +55,7 @@
   const cropOverlayContainer = document.getElementById('cropOverlayContainer');
   const cropBox = document.getElementById('cropBox');
   const cropGrid = document.getElementById('cropGrid');
-  const cropQualitySelect = document.getElementById('cropQualitySelect');
+  const cropFormatSelect = document.getElementById('cropFormatSelect');
   const cropSnapBtn = document.getElementById('cropSnapBtn');
   const cropConfirmBtn = document.getElementById('cropConfirmBtn');
   const cropCancelBtn = document.getElementById('cropCancelBtn');
@@ -691,8 +691,31 @@
     checkActionBarFlip();
   }
 
+  function updateCropFormatBadge() {
+    const resBadge = cropActionBar ? cropActionBar.querySelector('.res-text') : null;
+    if (!resBadge) return;
+    const mode = cropFormatSelect ? cropFormatSelect.value : (localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60');
+    if (mode === 'mp4-60') {
+      resBadge.innerText = '1080×1920 (60FPS MP4)';
+    } else if (mode === 'webm-vp9') {
+      resBadge.innerText = '1080×1920 (30FPS VP9 WebM)';
+    } else {
+      resBadge.innerText = '1080×1920 (30FPS VP8 WebM)';
+    }
+  }
+
+  if (cropFormatSelect) {
+    const savedFmt = localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60';
+    cropFormatSelect.value = savedFmt;
+    cropFormatSelect.addEventListener('change', () => {
+      localStorage.setItem('mobileSimulatorRecordFormat', cropFormatSelect.value);
+      updateCropFormatBadge();
+    });
+    updateCropFormatBadge();
+  }
+
   function updateCropDimensionsUI() {
-    // Quality selection is now controlled via cropQualitySelect
+    updateCropFormatBadge();
   }
 
   function checkActionBarFlip() {
@@ -1080,33 +1103,14 @@
   function startRenderLoop() {
     stopRenderLoop();
 
-    // Primary: requestVideoFrameCallback (Chrome 83+, Edge 83+, Safari 15.4+, Firefox 116+)
-    // Synchronized directly to display capture's video compositor frames with 0% CPU polling overhead!
-    if (helperVideo && typeof helperVideo.requestVideoFrameCallback === 'function') {
-      function videoFrameLoop(now, metadata) {
-        if (!isRecording || isNativeCropActive) return;
-        drawCroppedFrame();
-        videoFrameCallbackId = helperVideo.requestVideoFrameCallback(videoFrameLoop);
-      }
-      videoFrameCallbackId = helperVideo.requestVideoFrameCallback(videoFrameLoop);
-      return;
-    }
-
-    // Fallback: RAF loop with frame rate throttling
-    let lastDraw = 0;
-    const frameInterval = 1000 / 30; // 33.3ms for 30 FPS
-
-    function rafLoop(timestamp) {
+    // High-performance continuous RAF loop: synchronized to browser display repaints
+    // Ensures zero judder, zero cadence mismatch, and captures every motion frame cleanly!
+    function renderLoop() {
       if (!isRecording || isNativeCropActive) return;
-      if (timestamp - lastDraw >= frameInterval - 2) {
-        lastDraw = timestamp;
-        drawCroppedFrame();
-      }
-      cropAnimFrameId = requestAnimationFrame(rafLoop);
+      drawCroppedFrame();
+      cropAnimFrameId = requestAnimationFrame(renderLoop);
     }
-
-    lastDraw = performance.now();
-    cropAnimFrameId = requestAnimationFrame(rafLoop);
+    cropAnimFrameId = requestAnimationFrame(renderLoop);
   }
 
   function stopRenderLoop() {
@@ -1132,13 +1136,22 @@
       updateCachedRect();
       wasCropped916 = !!activeCropRect;
 
-      // Capture 1080p at 30 FPS - matches output framerate and avoids GPU/memory bandwidth saturation
+      const formatMode = cropFormatSelect ? cropFormatSelect.value : (localStorage.getItem('mobileSimulatorRecordFormat') || 'mp4-60');
+      const is60Fps = formatMode === 'mp4-60';
+      const targetFps = is60Fps ? 60 : 30;
+
+      // Dynamic Bitrate:
+      // 6 Mbps for 60FPS MP4 (GPU accelerated, zero CPU load, ultra fluid)
+      // 2.8 Mbps for VP9 (optimizes CPU software encoding so libvpx does NOT drop frames!)
+      // 4 Mbps for VP8
+      const targetBps = formatMode === 'mp4-60' ? 6000000 : (formatMode === 'webm-vp9' ? 2800000 : 4000000);
+
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: 'browser',
           width: { ideal: 1920, max: 1920 },
           height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 30, max: 30 }
+          frameRate: { ideal: targetFps, max: targetFps }
         },
         audio: true,
         preferCurrentTab: true,
@@ -1172,8 +1185,8 @@
           helperVideo.muted = true;
           helperVideo.playsInline = true;
           helperVideo.setAttribute('playsinline', '');
-          // Keep within layout with small dimensions on isolated GPU layer to avoid compositor repaints
-          helperVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.001;pointer-events:none;z-index:-1;visibility:visible;transform:translateZ(0);will-change:transform;';
+          // Keep opacity: 1 and inside viewport (1px x 1px) so Chromium NEVER throttles decoder to 10-15 FPS!
+          helperVideo.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:1;pointer-events:none;z-index:-9999;visibility:visible;';
         }
         if (!helperVideo.isConnected) {
           document.body.appendChild(helperVideo);
@@ -1209,32 +1222,45 @@
         cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
         drawCroppedFrame();
 
-        croppedStream = cropCanvas.captureStream(30); // 30 FPS stream
+        croppedStream = cropCanvas.captureStream(targetFps);
         rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
         finalStreamToRecord = croppedStream;
       }
 
-      // Prioritize modern WebM VP9 for superior compression efficiency, crisp text rendering, and open web standard
-      const mimeTypes = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=h264,opus',
-        'video/webm;codecs=h264',
-        'video/webm;codecs=avc1',
-        'video/webm',
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=avc1',
-        'video/mp4',
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=vp8'
-      ];
+      // Dynamic Codec Selection based on format mode
+      let mimeTypes = [];
+      if (formatMode === 'mp4-60') {
+        mimeTypes = [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1',
+          'video/mp4',
+          'video/webm;codecs=h264,opus',
+          'video/webm;codecs=h264',
+          'video/webm;codecs=vp9,opus',
+          'video/webm'
+        ];
+      } else if (formatMode === 'webm-vp9') {
+        mimeTypes = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp9',
+          'video/webm',
+          'video/mp4'
+        ];
+      } else {
+        mimeTypes = [
+          'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp8',
+          'video/webm',
+          'video/mp4'
+        ];
+      }
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
-      console.log('Selected recording MIME:', selectedMime);
+      console.log('Selected recording MIME:', selectedMime, 'Target FPS:', targetFps);
 
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 5000000 // 5 Mbps: Pristine 1080p 30FPS quality with minimal memory & CPU pressure
+        videoBitsPerSecond: targetBps
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -1260,10 +1286,14 @@
 
         const isWebm = selectedMime.includes('webm');
         const fileExt = isWebm ? 'webm' : 'mp4';
-        const codecLabel = selectedMime.includes('vp9') ? 'VP9 WebM' : (isWebm ? 'WebM' : 'MP4');
+        const codecLabel = selectedMime.includes('vp9')
+          ? 'VP9 WebM'
+          : (selectedMime.includes('vp8')
+            ? 'VP8 WebM'
+            : (isWebm ? 'WebM' : (is60Fps ? '60FPS MP4' : 'MP4')));
         const formatLabel = wasCropped916
-          ? `1080×1920 Full HD (9:16 Reel) 30FPS ${codecLabel}`
-          : `1080p 30FPS ${codecLabel}`;
+          ? `1080×1920 Full HD (9:16 Reel) ${is60Fps ? '60FPS' : '30FPS'} ${codecLabel}`
+          : `1080p ${is60Fps ? '60FPS' : '30FPS'} ${codecLabel}`;
 
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
