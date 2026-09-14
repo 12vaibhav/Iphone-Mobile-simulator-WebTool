@@ -1214,23 +1214,22 @@
         finalStreamToRecord = croppedStream;
       }
 
-      // Prioritize hardware-accelerated video encoders (H.264 / AVC via NVENC, Intel QSV, Apple VideoToolbox)
-      // for 0% CPU overhead, smooth 60fps browser interactions, and universal compatibility.
+      // Prioritize modern WebM VP9 for superior compression efficiency, crisp text rendering, and open web standard
       const mimeTypes = [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=avc1',
-        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp9',
         'video/webm;codecs=h264,opus',
         'video/webm;codecs=h264',
         'video/webm;codecs=avc1',
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp9',
         'video/webm',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1',
+        'video/mp4',
         'video/webm;codecs=vp8,opus',
         'video/webm;codecs=vp8'
       ];
       let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
-      console.log('Selected hardware-optimized recording MIME:', selectedMime);
+      console.log('Selected recording MIME:', selectedMime);
 
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(finalStreamToRecord, {
@@ -1261,9 +1260,10 @@
 
         const isWebm = selectedMime.includes('webm');
         const fileExt = isWebm ? 'webm' : 'mp4';
+        const codecLabel = selectedMime.includes('vp9') ? 'VP9 WebM' : (isWebm ? 'WebM' : 'MP4');
         const formatLabel = wasCropped916
-          ? `1080×1920 Full HD (9:16 Reel) 30FPS ${isWebm ? 'WebM' : 'MP4'}`
-          : `1080p 30FPS ${isWebm ? 'WebM' : 'MP4'}`;
+          ? `1080×1920 Full HD (9:16 Reel) 30FPS ${codecLabel}`
+          : `1080p 30FPS ${codecLabel}`;
 
         // Populate Modal
         recordedVideoPlayer.src = currentVideoUrl;
@@ -1273,7 +1273,7 @@
           : `mobile-recording-1080p-${Date.now()}.${fileExt}`;
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
         if (videoFormatBadge) videoFormatBadge.innerText = formatLabel;
-        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${isWebm ? 'WebM' : 'MP4'}`;
+        if (downloadBtnLabel) downloadBtnLabel.innerText = `Download 1080p ${codecLabel}`;
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
