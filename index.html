@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wedding Mobile Studio - iPhone Simulator & Screen Recorder</title>
+  <title>Wedding Mobile Studio - iPhone Simulator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,400&display=swap" rel="stylesheet">
@@ -125,8 +125,6 @@
       </div>
     </div>
 
-
-
     <div class="tool-divider"></div>
 
     <!-- Viewport Scale & Tilt -->
@@ -168,7 +166,7 @@
       <span>Refresh</span>
     </button>
 
-    <button id="recordBtn" class="dock-btn record-dock-btn" title="Start 1080p 30FPS VP9 WebM Screen Recording">
+    <button id="recordBtn" class="dock-btn record-dock-btn" title="Start 9:16 VP9 WebM Screen Recording">
       <span class="record-dot"></span>
       <span id="recordBtnText">Record</span>
     </button>
@@ -236,12 +234,11 @@
       </div>
     </div>
 
-    <!-- Native 9:16 Crop Target Element for Zero-Overhead Region Capture -->
+    <!-- Native 9:16 Crop Target Element for Canvas Region Capture -->
     <div id="recordingCropFrame" class="recording-crop-frame"></div>
 
     <!-- 9:16 Interactive Crop Viewfinder Overlay -->
     <div class="crop-overlay-container" id="cropOverlayContainer">
-      <!-- 9:16 Crop Box Frame with 0 0 0 9999px scrim -->
       <div class="crop-box" id="cropBox">
         <!-- 3x3 Rule-of-Thirds Grid -->
         <div class="crop-grid" id="cropGrid">
@@ -274,7 +271,7 @@
         <div class="crop-action-bar" id="cropActionBar">
           <div class="crop-ratio-badge">
             <span class="ratio-text">9:16 Reel</span>
-            <span class="res-text" id="cropResBadge">1080×1920 (30FPS VP9 WebM)</span>
+            <span class="res-text" id="cropResBadge">VP9 WebM</span>
           </div>
           <button type="button" class="crop-action-btn snap-btn" id="cropSnapBtn" title="Center and wrap 9:16 box around iPhone">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -283,9 +280,9 @@
             </svg>
             <span>Snap to Phone</span>
           </button>
-          <button type="button" class="crop-action-btn record-confirm-btn" id="cropConfirmBtn" title="Start 1080p Recording">
+          <button type="button" class="crop-action-btn record-confirm-btn" id="cropConfirmBtn" title="Start Recording">
             <span class="record-red-dot"></span>
-            <span>Start 1080p Record</span>
+            <span>Start Recording</span>
           </button>
           <button type="button" class="crop-action-btn cancel-btn" id="cropCancelBtn" title="Cancel Crop">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -310,8 +307,8 @@
             </svg>
           </div>
           <div>
-            <h3 class="modal-title">1080p Screen Recording Ready</h3>
-            <p class="modal-subtitle">Preview your high-definition mobile simulation before downloading.</p>
+            <h3 class="modal-title">Screen Recording Ready</h3>
+            <p class="modal-subtitle">Preview your recording before downloading.</p>
           </div>
         </div>
         <button id="closeModalBtn" class="modal-close-btn" title="Close">
@@ -329,17 +326,17 @@
       <div class="modal-footer">
         <div class="modal-info">
           <span id="videoDurationInfo">Duration: 00:00</span>
-          <span id="videoFormatBadge" class="badge-tag">1080p 30FPS VP9 WebM</span>
+          <span id="videoFormatBadge" class="badge-tag">9:16 VP9 WebM</span>
         </div>
         <div class="modal-actions">
           <button id="discardRecordBtn" class="secondary-btn">Discard</button>
-          <a id="downloadRecordBtn" class="primary-btn download-btn" download="mobile-recording-1080p.webm">
+          <a id="downloadRecordBtn" class="primary-btn download-btn" download="mobile-recording.webm">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
-            <span id="downloadBtnLabel">Download 1080p VP9 WebM</span>
+            <span id="downloadBtnLabel">Download VP9 WebM</span>
           </a>
         </div>
       </div>
@@ -349,8 +346,9 @@
   <!-- Toast Notification -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <!-- Fix WebM Duration -->
+  <!-- Fix WebM Duration Metadata -->
   <script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
+

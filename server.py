@@ -12,7 +12,7 @@ try:
 except ImportError:
     brotli = None
 
-PORT = 8080
+PORT = 8000
 
 # Permissive SSL context for proxy fetches (avoids failing on self-signed/expired certs on assets/staging CDNs)
 ssl_context = ssl.create_default_context()

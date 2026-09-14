@@ -1,5 +1,5 @@
 /**
- * Wedding Mobile Studio - iPhone Simulator & Screen Recorder
+ * Wedding Mobile Studio - iPhone Simulator
  * Core Application Logic
  */
 
@@ -45,6 +45,9 @@
   const fullscreenBtnText = document.getElementById('fullscreenBtnText');
   const fullscreenIcon = document.getElementById('fullscreenIcon');
 
+  // Toast Container
+  const toastContainer = document.getElementById('toastContainer');
+
   // Screen Recorder Elements
   const recordBtn = document.getElementById('recordBtn');
   const recordBtnText = document.getElementById('recordBtnText');
@@ -55,7 +58,6 @@
   const recordingCropFrame = document.getElementById('recordingCropFrame');
   const cropOverlayContainer = document.getElementById('cropOverlayContainer');
   const cropBox = document.getElementById('cropBox');
-  const cropGrid = document.getElementById('cropGrid');
   const cropSnapBtn = document.getElementById('cropSnapBtn');
   const cropConfirmBtn = document.getElementById('cropConfirmBtn');
   const cropCancelBtn = document.getElementById('cropCancelBtn');
@@ -71,8 +73,6 @@
   const discardRecordBtn = document.getElementById('discardRecordBtn');
   const closeModalBtn = document.getElementById('closeModalBtn');
 
-  // Toast Container
-  const toastContainer = document.getElementById('toastContainer');
 
   // ==========================================
   // State
@@ -81,7 +81,7 @@
   let isBgBlurred = false;
   let customBgDataUrl = null;
 
-  // Recorder State (1080p 30FPS VP9 WebM)
+  // Recorder State (VP9 WebM)
   let isRecording = false;
   let mediaRecorder = null;
   let recordedChunks = [];
@@ -89,6 +89,17 @@
   let currentVideoUrl = null;
   let recordTimerInterval = null;
   let recordStartTime = 0;
+  let rawDisplayStream = null;
+  let croppedStream = null;
+  let helperVideo = null;
+  let cropCanvas = null;
+  let cropCtx = null;
+  let activeCropRect = null;
+
+  // 9:16 Crop Selection State
+  const CROP_ASPECT_RATIO = 9 / 16;
+  let cropAnchor = { isSnapped: true, relX: 0, relY: 0, width: 0, height: 0 };
+
 
   // iPhone 16 Pro Finishes & Dimensions
   const IPHONE_16_PRO_FINISHES = {
@@ -594,37 +605,8 @@
   calculateAndApplyScale();
 
   // ==========================================
-  // High-Performance Mobile Screen Recording Engine (9:16 Crop Enabled)
+  // Recording Timer Helpers
   // ==========================================
-  let rawDisplayStream = null;
-  let croppedStream = null;
-  let croppedTrack = null;
-  let helperVideo = null;
-  let cropCanvas = null;
-  let cropCtx = null;
-  let cropAnimFrameId = null;
-  let isNativeCropActive = false;
-  let cachedDeviceRect = null;
-
-  // 9:16 Crop Selection State
-  let activeCropRect = null;
-  let wasCropped916 = false;
-  const CROP_ASPECT_RATIO = 9 / 16; // 0.5625
-  let cropAnchor = {
-    isSnapped: true,
-    relX: 0,
-    relY: 0,
-    width: 0,
-    height: 0
-  };
-  let recordingResizeObserver = null;
-
-  function updateCachedRect() {
-    if (deviceWrapper) {
-      cachedDeviceRect = deviceWrapper.getBoundingClientRect();
-    }
-  }
-
   function formatTimer(seconds) {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -635,7 +617,6 @@
     recordStartTime = Date.now();
     recordingTimer.innerText = '00:00';
     recordingBadge.classList.remove('hidden');
-
     recordTimerInterval = setInterval(() => {
       const elapsedSec = Math.floor((Date.now() - recordStartTime) / 1000);
       recordingTimer.innerText = formatTimer(elapsedSec);
@@ -655,11 +636,6 @@
     const vpRect = canvasViewport.getBoundingClientRect();
     const devRect = deviceWrapper.getBoundingClientRect();
 
-    // Available space inside viewport with margin
-    const maxW = Math.max(200, vpRect.width - 32);
-    const maxH = Math.max(350, vpRect.height - 32);
-
-    // Enclose phone with generous aesthetic framing padding (never cut off phone edges)
     const pad = 36;
     let targetH = devRect.height + pad * 2;
     let targetW = targetH * CROP_ASPECT_RATIO;
@@ -669,14 +645,12 @@
       targetH = targetW / CROP_ASPECT_RATIO;
     }
 
-    // Center over deviceWrapper relative to canvasViewport
     const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
     const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
 
     let left = devCenterRelX - targetW / 2;
     let top = devCenterRelY - targetH / 2;
 
-    // Clamp inside viewport
     left = Math.max(8, Math.min(vpRect.width - targetW - 8, left));
     top = Math.max(8, Math.min(vpRect.height - targetH - 8, top));
 
@@ -685,47 +659,9 @@
     cropBox.style.left = `${Math.round(left)}px`;
     cropBox.style.top = `${Math.round(top)}px`;
 
-    cropAnchor = {
-      isSnapped: true,
-      relX: 0,
-      relY: 0,
-      width: Math.round(targetW),
-      height: Math.round(targetH)
-    };
-
+    cropAnchor = { isSnapped: true, relX: 0, relY: 0, width: Math.round(targetW), height: Math.round(targetH) };
     syncRecordingCropFrame();
-    updateCropDimensionsUI();
     checkActionBarFlip();
-  }
-
-  function realignCropToDevice() {
-    if (!cropBox || !deviceWrapper || !canvasViewport) return;
-    if (!cropAnchor || cropAnchor.isSnapped) {
-      snapCropToDevice();
-      return;
-    }
-
-    const vpRect = canvasViewport.getBoundingClientRect();
-    const devRect = deviceWrapper.getBoundingClientRect();
-
-    const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
-    const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
-
-    const targetW = cropAnchor.width || cropBox.offsetWidth;
-    const targetH = cropAnchor.height || cropBox.offsetHeight;
-
-    let left = (devCenterRelX + (cropAnchor.relX || 0)) - targetW / 2;
-    let top = (devCenterRelY + (cropAnchor.relY || 0)) - targetH / 2;
-
-    left = Math.max(0, Math.min(vpRect.width - targetW, left));
-    top = Math.max(0, Math.min(vpRect.height - targetH, top));
-
-    cropBox.style.width = `${Math.round(targetW)}px`;
-    cropBox.style.height = `${Math.round(targetH)}px`;
-    cropBox.style.left = `${Math.round(left)}px`;
-    cropBox.style.top = `${Math.round(top)}px`;
-
-    syncRecordingCropFrame();
   }
 
   function syncRecordingCropFrame() {
@@ -740,16 +676,11 @@
     recordingCropFrame.style.top = cropBox.style.top;
   }
 
-  function updateCropDimensionsUI() {
-    // 30FPS VP9 WebM mode active
-  }
-
   function checkActionBarFlip() {
     if (!cropActionBar || !cropBox || !canvasViewport) return;
     const top = parseFloat(cropBox.style.top) || 0;
     const height = parseFloat(cropBox.style.height) || 0;
     const vpHeight = canvasViewport.clientHeight;
-
     if (top + height + 68 > vpHeight) {
       cropActionBar.classList.add('flip-top');
     } else {
@@ -761,7 +692,7 @@
     if (!cropOverlayContainer || !cropBox) return;
     cropOverlayContainer.classList.add('active');
     snapCropToDevice();
-    showToast('📐 Frame your 9:16 Reel & click "Start 9:16 Record"', 3000);
+    showToast('📐 Frame your 9:16 area & click "Start Recording"', 3000);
   }
 
   function closeCropViewfinder() {
@@ -771,14 +702,10 @@
 
   // --- Dragging the Crop Box ---
   let isDraggingCrop = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let initialBoxLeft = 0;
-  let initialBoxTop = 0;
+  let dragStartX = 0, dragStartY = 0, initialBoxLeft = 0, initialBoxTop = 0;
 
   if (cropBox) {
     cropBox.addEventListener('pointerdown', (e) => {
-      // Don't drag if clicking resize handle, action bar, or child buttons
       if (e.target.closest('.crop-handle') || e.target.closest('.crop-action-bar')) return;
       isDraggingCrop = true;
       dragStartX = e.clientX;
@@ -797,16 +724,10 @@
       const vpHeight = canvasViewport.clientHeight;
       const boxW = cropBox.offsetWidth;
       const boxH = cropBox.offsetHeight;
-
-      let newLeft = initialBoxLeft + dx;
-      let newTop = initialBoxTop + dy;
-
-      newLeft = Math.max(0, Math.min(vpWidth - boxW, newLeft));
-      newTop = Math.max(0, Math.min(vpHeight - boxH, newTop));
-
+      let newLeft = Math.max(0, Math.min(vpWidth - boxW, initialBoxLeft + dx));
+      let newTop = Math.max(0, Math.min(vpHeight - boxH, initialBoxTop + dy));
       cropBox.style.left = `${Math.round(newLeft)}px`;
       cropBox.style.top = `${Math.round(newTop)}px`;
-
       syncRecordingCropFrame();
       checkActionBarFlip();
     });
@@ -816,7 +737,6 @@
       isDraggingCrop = false;
       cropBox.classList.remove('dragging');
       try { cropBox.releasePointerCapture(e.pointerId); } catch (err) {}
-
       if (deviceWrapper && canvasViewport) {
         const vpRect = canvasViewport.getBoundingClientRect();
         const devRect = deviceWrapper.getBoundingClientRect();
@@ -824,29 +744,17 @@
         const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
         const boxCenterX = (parseFloat(cropBox.style.left) || 0) + cropBox.offsetWidth / 2;
         const boxCenterY = (parseFloat(cropBox.style.top) || 0) + cropBox.offsetHeight / 2;
-
-        cropAnchor = {
-          isSnapped: false,
-          relX: boxCenterX - devCenterRelX,
-          relY: boxCenterY - devCenterRelY,
-          width: cropBox.offsetWidth,
-          height: cropBox.offsetHeight
-        };
+        cropAnchor = { isSnapped: false, relX: boxCenterX - devCenterRelX, relY: boxCenterY - devCenterRelY, width: cropBox.offsetWidth, height: cropBox.offsetHeight };
       }
     };
-
     cropBox.addEventListener('pointerup', endDrag);
     cropBox.addEventListener('pointercancel', endDrag);
   }
 
   // --- Resizing the Crop Box (Strict 9:16 Aspect Ratio) ---
   let activeResizeHandle = null;
-  let resizeStartX = 0;
-  let resizeStartY = 0;
-  let initialResizeLeft = 0;
-  let initialResizeTop = 0;
-  let initialResizeW = 0;
-  let initialResizeH = 0;
+  let resizeStartX = 0, resizeStartY = 0;
+  let initialResizeLeft = 0, initialResizeTop = 0, initialResizeW = 0, initialResizeH = 0;
 
   const cropHandles = cropOverlayContainer ? cropOverlayContainer.querySelectorAll('.crop-handle') : [];
   cropHandles.forEach(handle => {
@@ -859,7 +767,6 @@
       initialResizeTop = parseFloat(cropBox.style.top) || 0;
       initialResizeW = cropBox.offsetWidth;
       initialResizeH = cropBox.offsetHeight;
-
       cropBox.classList.add('resizing');
       handle.setPointerCapture(e.pointerId);
     });
@@ -870,83 +777,45 @@
       const dy = e.clientY - resizeStartY;
       const vpWidth = canvasViewport.clientWidth;
       const vpHeight = canvasViewport.clientHeight;
-
-      let newW = initialResizeW;
-      let newH = initialResizeH;
-      let newLeft = initialResizeLeft;
-      let newTop = initialResizeTop;
-
+      let newW = initialResizeW, newH = initialResizeH;
+      let newLeft = initialResizeLeft, newTop = initialResizeTop;
       const MIN_W = 180;
 
       if (activeResizeHandle === 'br') {
         const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (dy * CROP_ASPECT_RATIO);
         newW = Math.max(MIN_W, initialResizeW + delta);
         newH = newW / CROP_ASPECT_RATIO;
-        if (newLeft + newW > vpWidth) {
-          newW = vpWidth - newLeft;
-          newH = newW / CROP_ASPECT_RATIO;
-        }
-        if (newTop + newH > vpHeight) {
-          newH = vpHeight - newTop;
-          newW = newH * CROP_ASPECT_RATIO;
-        }
+        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / CROP_ASPECT_RATIO; }
+        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * CROP_ASPECT_RATIO; }
       } else if (activeResizeHandle === 'tr') {
         const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (-dy * CROP_ASPECT_RATIO);
         newW = Math.max(MIN_W, initialResizeW + delta);
         newH = newW / CROP_ASPECT_RATIO;
         newTop = initialResizeTop - (newH - initialResizeH);
-        if (newTop < 0) {
-          newTop = 0;
-          newH = initialResizeTop + initialResizeH;
-          newW = newH * CROP_ASPECT_RATIO;
-        }
-        if (newLeft + newW > vpWidth) {
-          newW = vpWidth - newLeft;
-          newH = newW / CROP_ASPECT_RATIO;
-          newTop = initialResizeTop - (newH - initialResizeH);
-        }
+        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * CROP_ASPECT_RATIO; }
+        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / CROP_ASPECT_RATIO; newTop = initialResizeTop - (newH - initialResizeH); }
       } else if (activeResizeHandle === 'bl') {
         const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (dy * CROP_ASPECT_RATIO);
         newW = Math.max(MIN_W, initialResizeW + delta);
         newH = newW / CROP_ASPECT_RATIO;
         newLeft = initialResizeLeft - (newW - initialResizeW);
-        if (newLeft < 0) {
-          newLeft = 0;
-          newW = initialResizeLeft + initialResizeW;
-          newH = newW / CROP_ASPECT_RATIO;
-        }
-        if (newTop + newH > vpHeight) {
-          newH = vpHeight - newTop;
-          newW = newH * CROP_ASPECT_RATIO;
-          newLeft = initialResizeLeft - (newW - initialResizeW);
-        }
+        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / CROP_ASPECT_RATIO; }
+        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * CROP_ASPECT_RATIO; newLeft = initialResizeLeft - (newW - initialResizeW); }
       } else if (activeResizeHandle === 'tl') {
         const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (-dy * CROP_ASPECT_RATIO);
         newW = Math.max(MIN_W, initialResizeW + delta);
         newH = newW / CROP_ASPECT_RATIO;
         newLeft = initialResizeLeft - (newW - initialResizeW);
         newTop = initialResizeTop - (newH - initialResizeH);
-        if (newLeft < 0) {
-          newLeft = 0;
-          newW = initialResizeLeft + initialResizeW;
-          newH = newW / CROP_ASPECT_RATIO;
-          newTop = initialResizeTop - (newH - initialResizeH);
-        }
-        if (newTop < 0) {
-          newTop = 0;
-          newH = initialResizeTop + initialResizeH;
-          newW = newH * CROP_ASPECT_RATIO;
-          newLeft = initialResizeLeft - (newW - initialResizeW);
-        }
+        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / CROP_ASPECT_RATIO; newTop = initialResizeTop - (newH - initialResizeH); }
+        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * CROP_ASPECT_RATIO; newLeft = initialResizeLeft - (newW - initialResizeW); }
       }
 
       cropBox.style.width = `${Math.round(newW)}px`;
       cropBox.style.height = `${Math.round(newH)}px`;
       cropBox.style.left = `${Math.round(newLeft)}px`;
       cropBox.style.top = `${Math.round(newTop)}px`;
-
       syncRecordingCropFrame();
-      updateCropDimensionsUI();
       checkActionBarFlip();
     });
 
@@ -955,7 +824,6 @@
       activeResizeHandle = null;
       cropBox.classList.remove('resizing');
       try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
-
       if (deviceWrapper && canvasViewport) {
         const vpRect = canvasViewport.getBoundingClientRect();
         const devRect = deviceWrapper.getBoundingClientRect();
@@ -963,22 +831,14 @@
         const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
         const boxCenterX = (parseFloat(cropBox.style.left) || 0) + cropBox.offsetWidth / 2;
         const boxCenterY = (parseFloat(cropBox.style.top) || 0) + cropBox.offsetHeight / 2;
-
-        cropAnchor = {
-          isSnapped: false,
-          relX: boxCenterX - devCenterRelX,
-          relY: boxCenterY - devCenterRelY,
-          width: cropBox.offsetWidth,
-          height: cropBox.offsetHeight
-        };
+        cropAnchor = { isSnapped: false, relX: boxCenterX - devCenterRelX, relY: boxCenterY - devCenterRelY, width: cropBox.offsetWidth, height: cropBox.offsetHeight };
       }
     };
-
     handle.addEventListener('pointerup', endResize);
     handle.addEventListener('pointercancel', endResize);
   });
 
-  // Buttons in Crop Action Bar
+  // Crop Action Bar Buttons
   if (cropSnapBtn) {
     cropSnapBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -999,41 +859,27 @@
     cropConfirmBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!cropBox) return;
-
       syncRecordingCropFrame();
-
       const boxRect = cropBox.getBoundingClientRect();
-      activeCropRect = {
-        left: boxRect.left + 2,
-        top: boxRect.top + 2,
-        width: boxRect.width - 4,
-        height: boxRect.height - 4
-      };
-
-      // Hide overlay so NO dotted lines, handles, or scrim are rendered into the capture!
+      activeCropRect = { left: boxRect.left + 2, top: boxRect.top + 2, width: boxRect.width - 4, height: boxRect.height - 4 };
       closeCropViewfinder();
-
-      // Start the actual screen recording
       await startScreenRecording();
     });
   }
 
-  // Detect best supported WebM codec (VP9 prioritized for maximum visual quality)
+  // ==========================================
+  // High-Performance Screen Recording Engine (VP9 WebM)
+  // ==========================================
   function getSupportedWebmMime() {
     const webmCandidates = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp9',
-      'video/webm;codecs=vp09.00.10.08',
       'video/webm;codecs=vp8,opus',
       'video/webm;codecs=vp8',
       'video/webm'
     ];
     return webmCandidates.find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || 'video/webm';
   }
-
-  // ==========================================
-  // NATIVE REGION CAPTURE & FALLBACK LOGIC
-  // ==========================================
 
   async function startScreenRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -1043,120 +889,144 @@
 
     try {
       syncRecordingCropFrame();
-      wasCropped916 = true;
 
-      // Pure display capture
       rawDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'browser',
-          frameRate: { ideal: 60 }
+        video: { 
+          displaySurface: 'browser', 
+          frameRate: { ideal: 30, max: 30 },
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 }
         },
         audio: true,
         preferCurrentTab: true,
         selfBrowserSurface: 'include',
-        surfaceSwitching: 'exclude'
+        surfaceSwitching: 'exclude',
+        monitorTypeSurfaces: 'exclude'
       });
 
-      // Wait 350ms for browser sharing infobar animation to settle
+      // Wait for browser sharing infobar animation to settle
       await new Promise(resolve => setTimeout(resolve, 350));
 
       const videoTrack = rawDisplayStream.getVideoTracks()[0];
-      croppedStream = null;
-
-      // --- FORCE CONSTANT RESOLUTION CANVAS RECORDING ---
-      // We do NOT use videoTrack.cropTo() because it causes a resolution change mid-stream
-      // (from full screen to cropped size). While media players handle Variable Resolution WebMs,
-      // Video Editors (Premiere, Resolve) lock to the first frame's resolution, causing massive
-      // zoom-in and cut-off issues if the resolution drops.
-      // Recording a fixed-size Canvas guarantees a constant resolution video file.
       
-      console.log('Using requestVideoFrameCallback canvas for constant resolution recording.');
-      if (!helperVideo) {
-        helperVideo = document.createElement('video');
-        helperVideo.muted = true;
-        helperVideo.playsInline = true;
-        helperVideo.setAttribute('playsinline', '');
-        helperVideo.style.cssText = 'position:fixed;bottom:10px;right:10px;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-9999;';
+      // Enforce sharing a tab to ensure high-performance native CropTarget works
+      const settings = videoTrack.getSettings();
+      if (settings.displaySurface && settings.displaySurface !== 'browser') {
+        rawDisplayStream.getTracks().forEach(t => t.stop());
+        alert('Performance Error: You MUST select "This Tab" or "Current Tab" when sharing. Recording the "Entire Screen" or "Window" will cause severe lag and incorrect cropping. Please try again.');
+        return;
       }
-      if (!helperVideo.isConnected) {
-        document.body.appendChild(helperVideo);
-      }
-      helperVideo.srcObject = rawDisplayStream;
-      await helperVideo.play().catch(e => console.warn('Helper video play:', e));
-      
-      await new Promise(resolve => {
-        if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) return resolve();
-        const onReady = () => {
-           if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) {
-             helperVideo.removeEventListener('loadeddata', onReady);
-             resolve();
-           }
-        };
-        helperVideo.addEventListener('loadeddata', onReady);
-      });
+      let nativeCropSuccessful = false;
 
-      if (!cropCanvas) {
-        cropCanvas = document.createElement('canvas');
-        cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
+      // 1) Try Native Hardware-Accelerated Region Capture (Zero performance drop)
+      if (window.CropTarget && videoTrack.cropTo) {
+        try {
+          const cropTarget = await CropTarget.fromElement(recordingCropFrame);
+          await videoTrack.cropTo(cropTarget);
+          
+          // BUG FIX: Wait for the hardware compositor to actually apply the crop
+          // If we start MediaRecorder immediately, it captures an initial uncropped 1080p frame,
+          // which locks the WebM header to the wrong resolution and breaks video editors.
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          croppedStream = rawDisplayStream; // The stream is natively cropped!
+          nativeCropSuccessful = true;
+          console.log('Using native Region Capture (CropTarget) for zero performance impact.');
+        } catch (err) {
+          console.warn('Native cropTo failed, falling back to canvas:', err);
+        }
       }
-      
-      // CRITICAL FIX: Lock the canvas to fixed dimensions for the ENTIRE recording.
-      const initialDevRect = recordingCropFrame.getBoundingClientRect();
-      const fixedWidth = Math.round(initialDevRect.width);
-      const fixedHeight = Math.round(initialDevRect.height);
-      
-      cropCanvas.width = fixedWidth;
-      cropCanvas.height = fixedHeight;
-      
-      cropCtx.imageSmoothingEnabled = true;
-      cropCtx.imageSmoothingQuality = 'high';
 
-      function drawFallbackFrame(now, metadata) {
-         if (!isRecording) return;
-         if (helperVideo.videoWidth > 0) {
+      // 2) Fallback to Canvas-based cropping (for Firefox or older browsers)
+      if (!nativeCropSuccessful) {
+        console.log('Using canvas fallback for cropping (may impact performance).');
+        
+        // Create off-screen helper video to feed canvas
+        if (!helperVideo) {
+          helperVideo = document.createElement('video');
+          helperVideo.muted = true;
+          helperVideo.playsInline = true;
+          helperVideo.setAttribute('playsinline', '');
+          // Hiding it properly without triggering small-video optimizations
+          helperVideo.style.cssText = 'position:fixed; left: -10000px; top: -10000px; width: 100vw; height: 100vh; pointer-events: none; z-index: -9999;';
+        }
+        if (!helperVideo.isConnected) document.body.appendChild(helperVideo);
+        helperVideo.srcObject = rawDisplayStream;
+        await helperVideo.play().catch(e => console.warn('Helper video play:', e));
+
+        await new Promise(resolve => {
+          if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) return resolve();
+          const onReady = () => {
+            if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) {
+              helperVideo.removeEventListener('loadeddata', onReady);
+              resolve();
+            }
+          };
+          helperVideo.addEventListener('loadeddata', onReady);
+        });
+
+        // Create fixed-resolution canvas (locked for entire recording)
+        // Scale based on the ACTUAL video stream resolution to guarantee 1:1 pixel mapping (no upscaling blur)
+        if (!cropCanvas) {
+          cropCanvas = document.createElement('canvas');
+          cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
+        }
+
+        const initialDevRect = recordingCropFrame.getBoundingClientRect();
+        const scaleX = helperVideo.videoWidth / window.innerWidth;
+        const scaleY = helperVideo.videoHeight / window.innerHeight;
+        
+        const fixedWidth = Math.round(initialDevRect.width * scaleX);
+        const fixedHeight = Math.round(initialDevRect.height * scaleY);
+        
+        cropCanvas.width = fixedWidth;
+        cropCanvas.height = fixedHeight;
+        cropCtx.imageSmoothingEnabled = true;
+        cropCtx.imageSmoothingQuality = 'high';
+
+        // GPU-synced frame drawing via requestVideoFrameCallback
+        function drawFrame() {
+          if (!isRecording) return;
+          if (helperVideo.videoWidth > 0) {
             const devRect = recordingCropFrame.getBoundingClientRect();
             const scaleX = helperVideo.videoWidth / window.innerWidth;
             const scaleY = helperVideo.videoHeight / window.innerHeight;
-            
             cropCtx.fillStyle = '#12151d';
             cropCtx.fillRect(0, 0, fixedWidth, fixedHeight);
-
             cropCtx.drawImage(
-               helperVideo,
-               Math.max(0, Math.round(devRect.left * scaleX)), 
-               Math.max(0, Math.round(devRect.top * scaleY)),
-               Math.round(devRect.width * scaleX), 
-               Math.round(devRect.height * scaleY),
-               0, 0,
-               fixedWidth, fixedHeight
+              helperVideo,
+              Math.max(0, Math.round(devRect.left * scaleX)),
+              Math.max(0, Math.round(devRect.top * scaleY)),
+              Math.round(devRect.width * scaleX),
+              Math.round(devRect.height * scaleY),
+              0, 0, fixedWidth, fixedHeight
             );
-         }
-         helperVideo.requestVideoFrameCallback(drawFallbackFrame);
-      }
-      
-      helperVideo.requestVideoFrameCallback(drawFallbackFrame);
-      croppedStream = cropCanvas.captureStream(60); // 60 FPS constant stream
-      rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
+          }
+          helperVideo.requestVideoFrameCallback(drawFrame);
+        }
 
-      // Set recording flag
+        helperVideo.requestVideoFrameCallback(drawFrame);
+        croppedStream = cropCanvas.captureStream(30);
+        rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
+      }
+
+      // Set recording flag & update UI
       isRecording = true;
       recordBtn.classList.add('recording');
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
 
-      // Best WebM Codec Configuration (VP9 / VP8)
+      // Configure MediaRecorder (VP9 WebM)
       const selectedMime = getSupportedWebmMime();
       recordedChunks = [];
 
       mediaRecorder = new MediaRecorder(croppedStream, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 6000000 // 6 Mbps
+        videoBitsPerSecond: 8_000_000
       });
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          recordedChunks.push(e.data);
-        }
+        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
       };
 
       mediaRecorder.onstop = async () => {
@@ -1165,6 +1035,7 @@
 
         let finalBlob = new Blob(recordedChunks, { type: selectedMime });
 
+        // Fix WebM duration metadata
         if (typeof ysFixWebmDuration !== 'undefined' && durationMs > 500) {
           finalBlob = await new Promise(resolve => {
             ysFixWebmDuration(finalBlob, durationMs, (fixedBlob) => {
@@ -1176,7 +1047,6 @@
         recordedBlob = finalBlob;
         if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
         currentVideoUrl = URL.createObjectURL(recordedBlob);
-
         recordedVideoPlayer.src = currentVideoUrl;
 
         // Configure Download Button
@@ -1187,28 +1057,24 @@
           downloadRecordBtn.download = `mobile-recording-${timestamp}.webm`;
         }
         if (downloadBtnLabel) {
-          downloadBtnLabel.innerText = `Download Native VP9 WebM (${finalMb} MB)`;
+          downloadBtnLabel.innerText = `Download VP9 WebM (${finalMb} MB)`;
         }
 
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
-        if (videoFormatBadge) {
-          videoFormatBadge.innerText = 'Native Mobile Crop (VP9 WebM)';
-        }
+        if (videoFormatBadge) videoFormatBadge.innerText = '9:16 VP9 WebM';
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
         recordedVideoPlayer.play().catch(() => {});
-        showToast('🎬 Native VP9 WebM recording ready for download!');
+        showToast('🎬 Recording ready for preview & download!');
       };
 
       if (videoTrack) {
-        videoTrack.onended = () => {
-          if (isRecording) stopScreenRecording();
-        };
+        videoTrack.onended = () => { if (isRecording) stopScreenRecording(); };
       }
 
       mediaRecorder.start(1000);
-      showToast('🔴 Recording Started (Zero-Stutter Native VP9 WebM)');
+      showToast('🔴 Recording Started');
 
     } catch (err) {
       console.warn('Screen recording cancelled or error:', err);
@@ -1225,7 +1091,6 @@
   function stopScreenRecording() {
     if (!isRecording) return;
     isRecording = false;
-
     recordBtn.classList.remove('recording');
     recordBtnText.innerText = 'Record';
     stopRecordingTimer();
@@ -1248,13 +1113,12 @@
     if (helperVideo) {
       helperVideo.pause();
       helperVideo.srcObject = null;
-      if (helperVideo.isConnected) {
-        helperVideo.remove();
-      }
+      if (helperVideo.isConnected) helperVideo.remove();
       helperVideo = null;
     }
   }
 
+  // Record Button: Opens crop viewfinder or stops recording
   recordBtn.addEventListener('click', () => {
     if (!isRecording) {
       if (cropOverlayContainer && cropOverlayContainer.classList.contains('active')) {
@@ -1267,7 +1131,9 @@
     }
   });
 
-  // Modal Close & Discard
+  // ==========================================
+  // Recording Preview Modal
+  // ==========================================
   function closePreviewModal() {
     recordModalBackdrop.classList.remove('active');
     recordedVideoPlayer.pause();
@@ -1280,14 +1146,12 @@
   });
 
   recordModalBackdrop.addEventListener('click', (e) => {
-    if (e.target === recordModalBackdrop) {
-      closePreviewModal();
-    }
+    if (e.target === recordModalBackdrop) closePreviewModal();
   });
 
   if (downloadRecordBtn) {
     downloadRecordBtn.addEventListener('click', () => {
-      showToast('⬇️ 1080p WebM video download started');
+      showToast('⬇️ VP9 WebM video download started');
     });
   }
 

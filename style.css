@@ -1,5 +1,5 @@
 /* =========================================================
-   Wedding Mobile Studio - iPhone Simulator & Screen Recorder
+   Wedding Mobile Studio - iPhone Simulator
    ========================================================= */
 
 :root {
@@ -199,84 +199,7 @@ html, body {
   transform: scale(0.97);
 }
 
-/* Free Screen Recording Header Group */
-.header-record-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 
-.recording-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  padding: 5px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #f87171;
-  font-variant-numeric: tabular-nums;
-}
-
-.recording-badge.hidden {
-  display: none;
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  background-color: var(--accent-record);
-  border-radius: 50%;
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  animation: pulseRecording 1.4s infinite;
-}
-
-@keyframes pulseRecording {
-  0% { transform: scale(0.9) translateZ(0); opacity: 0.8; }
-  50% { transform: scale(1.15) translateZ(0); opacity: 1; }
-  100% { transform: scale(0.9) translateZ(0); opacity: 0.8; }
-}
-
-.record-btn {
-  background: #201316;
-  border: 1px solid rgba(239, 68, 68, 0.5);
-  color: #ffffff;
-  border-radius: 22px;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: var(--transition);
-}
-
-.record-dot {
-  width: 10px;
-  height: 10px;
-  background-color: var(--accent-record);
-  border-radius: 50%;
-}
-
-.record-btn:hover {
-  background: rgba(239, 68, 68, 0.25);
-  border-color: #ef4444;
-}
-
-.record-btn.recording {
-  background: var(--accent-record);
-  border-color: #dc2626;
-  color: #ffffff;
-}
-
-.record-btn.recording .record-dot {
-  background: #ffffff;
-  border-radius: 2px; /* Square stop icon */
-}
 
 /* =========================================================
    Secondary Studio Toolbar
@@ -748,6 +671,522 @@ html, body {
   display: none !important;
 }
 
+
+
+/* =========================================================
+   Floating Bottom-Right Dock (Refresh & Full Screen)
+   ========================================================= */
+.floating-bottom-dock {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(18, 21, 29, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  border-radius: 40px;
+  padding: 6px 8px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.floating-bottom-dock:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65), 0 0 15px rgba(229, 169, 60, 0.12);
+}
+
+.dock-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border-radius: 30px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.dock-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.dock-btn:active {
+  transform: translateY(0);
+}
+
+/* Refresh Button in Dock */
+.refresh-dock-btn {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #7dd3fc;
+}
+
+.refresh-dock-btn:hover {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.refresh-dock-btn svg.spinning {
+  animation: spin 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+
+/* Record Button Styling */
+.record-dock-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ff8e8e;
+}
+
+.record-dock-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ffffff;
+}
+
+.record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-record);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+  transition: all 0.2s ease;
+}
+
+.record-dock-btn.recording {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: var(--accent-record);
+  color: #ffffff;
+  will-change: transform;
+  transform: translateZ(0);
+  animation: recordPulse 2s infinite ease-in-out;
+}
+
+.record-dock-btn.recording .record-dot {
+  border-radius: 2px;
+  transform: scale(0.9);
+  background: #ffffff;
+  box-shadow: 0 0 8px #ffffff;
+}
+
+@keyframes recordPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Recording Live Timer Badge */
+.recording-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff7676;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.recording-badge.hidden {
+  display: none !important;
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-record);
+  animation: pulseRecording 1.4s infinite;
+}
+
+@keyframes pulseRecording {
+  0% { transform: scale(0.9) translateZ(0); opacity: 0.8; }
+  50% { transform: scale(1.15) translateZ(0); opacity: 1; }
+  100% { transform: scale(0.9) translateZ(0); opacity: 0.8; }
+}
+
+/* Full Screen Button Styling */
+.fullscreen-dock-btn {
+  background: rgba(229, 169, 60, 0.12);
+  border-color: rgba(229, 169, 60, 0.3);
+  color: #f5d496;
+}
+
+.fullscreen-dock-btn:hover {
+  background: rgba(229, 169, 60, 0.22);
+  border-color: var(--accent-gold);
+  color: #ffffff;
+}
+
+/* =========================================================
+   Toast Notification
+   ========================================================= */
+.toast-container {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toastIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.toast.fade-out {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.3s ease;
+}
+
+/* =========================================================
+   Full Screen Presentation Mode
+   ========================================================= */
+body.fullscreen-mode .top-header,
+body.fullscreen-mode .studio-toolbar {
+  display: none !important;
+}
+
+body.fullscreen-mode .canvas-viewport {
+  height: 100vh !important;
+  width: 100vw !important;
+}
+
+/* =========================================================
+   Native Region Capture 9:16 Crop Target Frame
+   ========================================================= */
+.recording-crop-frame {
+  position: absolute;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  visibility: visible;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+/* =========================================================
+   9:16 Interactive Crop Viewfinder Overlay
+   ========================================================= */
+.crop-overlay-container {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.25s;
+}
+
+.crop-overlay-container.active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* 9:16 Crop Box Frame */
+.crop-box {
+  position: absolute;
+  border: 2px dashed rgba(229, 169, 60, 0.9);
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 25px rgba(229, 169, 60, 0.25), inset 0 0 18px rgba(229, 169, 60, 0.08);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  animation: cropBoxPulse 2.8s infinite alternate ease-in-out;
+}
+
+@keyframes cropBoxPulse {
+  0% {
+    border-color: rgba(229, 169, 60, 0.85);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(229, 169, 60, 0.2);
+  }
+  100% {
+    border-color: rgba(255, 214, 128, 1);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 32px rgba(229, 169, 60, 0.45);
+  }
+}
+
+.crop-box.dragging {
+  cursor: grabbing;
+  border-style: solid;
+  border-color: #ffd680;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72), 0 0 35px rgba(229, 169, 60, 0.5);
+}
+
+.crop-box.resizing {
+  border-style: solid;
+  border-color: #f87171;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72), 0 0 35px rgba(239, 68, 68, 0.4);
+}
+
+/* 3x3 Rule-of-Thirds Grid */
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 12px;
+  overflow: hidden;
+  opacity: 0.35;
+  transition: opacity 0.2s;
+}
+
+.crop-box:hover .crop-grid,
+.crop-box.dragging .crop-grid,
+.crop-box.resizing .crop-grid {
+  opacity: 0.75;
+}
+
+.grid-line {
+  position: absolute;
+  pointer-events: none;
+}
+
+.grid-line-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+.grid-line-h.h-1 { top: 33.333%; }
+.grid-line-h.h-2 { top: 66.666%; }
+
+.grid-line-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+.grid-line-v.v-1 { left: 33.333%; }
+.grid-line-v.v-2 { left: 66.666%; }
+
+/* Corner Resize Handles */
+.crop-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
+  border: 2.5px solid var(--accent-gold);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  z-index: 10;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  touch-action: none;
+}
+
+.crop-handle:hover, .crop-box.resizing .crop-handle {
+  transform: scale(1.25);
+  background: var(--accent-gold);
+  border-color: #ffffff;
+}
+
+.handle-tl { top: -9px; left: -9px; cursor: nwse-resize; }
+.handle-tr { top: -9px; right: -9px; cursor: nesw-resize; }
+.handle-bl { bottom: -9px; left: -9px; cursor: nesw-resize; }
+.handle-br { bottom: -9px; right: -9px; cursor: nwse-resize; }
+
+/* Center Move Drag Hint */
+.crop-move-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(15, 17, 23, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 6px 14px;
+  border-radius: 20px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  opacity: 0.85;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.crop-box.dragging .crop-move-hint {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.05);
+  border-color: var(--accent-gold);
+  color: #ffffff;
+}
+
+.crop-box.resizing .crop-move-hint {
+  opacity: 0;
+}
+
+/* Floating Action Pill Toolbar */
+.crop-action-bar {
+  position: absolute;
+  bottom: -56px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(18, 20, 29, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
+  padding: 6px 10px;
+  border-radius: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 20;
+  white-space: nowrap;
+  pointer-events: auto;
+  user-select: none;
+  transition: bottom 0.2s ease, top 0.2s ease;
+}
+
+.crop-action-bar.flip-top {
+  bottom: auto;
+  top: -56px;
+}
+
+.crop-ratio-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 5px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.crop-ratio-badge .ratio-text {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-gold);
+}
+
+.crop-ratio-badge .res-text {
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.crop-action-btn {
+  border: none;
+  background: none;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.crop-action-btn.snap-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.crop-action-btn.snap-btn:hover {
+  background: rgba(229, 169, 60, 0.16);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  transform: translateY(-1px);
+}
+
+.crop-action-btn.record-confirm-btn {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.crop-action-btn.record-confirm-btn:hover {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.6);
+  transform: translateY(-1px);
+}
+
+.crop-action-btn.record-confirm-btn .record-red-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  animation: pulseRecording 1.4s infinite;
+}
+
+.crop-action-btn.cancel-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.crop-action-btn.cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+  transform: translateY(-1px);
+}
+
 /* =========================================================
    Recording Preview Modal
    ========================================================= */
@@ -915,535 +1354,3 @@ html, body {
 .download-btn:hover {
   transform: translateY(-1px);
 }
-
-/* =========================================================
-   Floating Bottom-Right Dock (Record & Full Screen)
-   ========================================================= */
-.floating-bottom-dock {
-  position: fixed;
-  bottom: 22px;
-  right: 22px;
-  z-index: 600;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(18, 21, 29, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
-  border-radius: 40px;
-  padding: 6px 8px;
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-
-.floating-bottom-dock:hover {
-  border-color: rgba(255, 255, 255, 0.25);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65), 0 0 15px rgba(229, 169, 60, 0.12);
-}
-
-.dock-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-  border-radius: 30px;
-  padding: 8px 16px;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-family: inherit;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  white-space: nowrap;
-  user-select: none;
-}
-
-.dock-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px);
-}
-
-.dock-btn:active {
-  transform: translateY(0);
-}
-
-/* Refresh Button in Dock */
-.refresh-dock-btn {
-  background: rgba(56, 189, 248, 0.12);
-  border-color: rgba(56, 189, 248, 0.3);
-  color: #7dd3fc;
-}
-
-.refresh-dock-btn:hover {
-  background: rgba(56, 189, 248, 0.22);
-  border-color: #38bdf8;
-  color: #ffffff;
-}
-
-.refresh-dock-btn svg.spinning {
-  animation: spin 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Record Button Styling */
-.record-dock-btn {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #ff8e8e;
-}
-
-.record-dock-btn:hover {
-  background: rgba(239, 68, 68, 0.22);
-  border-color: rgba(239, 68, 68, 0.55);
-  color: #ffffff;
-}
-
-.record-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
-  transition: all 0.2s ease;
-}
-
-.record-dock-btn.recording {
-  background: rgba(239, 68, 68, 0.28);
-  border-color: #ef4444;
-  color: #ffffff;
-  will-change: transform;
-  transform: translateZ(0);
-  animation: recordPulse 2s infinite ease-in-out;
-}
-
-.record-dock-btn.recording .record-dot {
-  border-radius: 2px; /* Square stop icon when recording */
-  transform: scale(0.9);
-  background: #ffffff;
-  box-shadow: 0 0 8px #ffffff;
-}
-
-@keyframes recordPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-}
-
-/* Recording Live Timer Badge */
-.recording-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(239, 68, 68, 0.2);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #ff7676;
-  letter-spacing: 0.5px;
-  will-change: transform;
-  transform: translateZ(0);
-}
-
-.recording-badge.hidden {
-  display: none !important;
-}
-
-.pulse-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #ef4444;
-  animation: blinkDot 1s infinite;
-}
-
-@keyframes blinkDot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
-}
-
-/* Full Screen Button Styling */
-.fullscreen-dock-btn {
-  background: rgba(229, 169, 60, 0.12);
-  border-color: rgba(229, 169, 60, 0.3);
-  color: #f5d496;
-}
-
-.fullscreen-dock-btn:hover {
-  background: rgba(229, 169, 60, 0.22);
-  border-color: var(--accent-gold);
-  color: #ffffff;
-}
-
-/* =========================================================
-   Toast Notification
-   ========================================================= */
-.toast-container {
-  position: fixed;
-  bottom: 80px;
-  right: 24px;
-  z-index: 1100;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.toast {
-  background: var(--bg-surface-elevated);
-  border: 1px solid var(--border-subtle);
-  color: #ffffff;
-  padding: 10px 18px;
-  border-radius: 30px;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  opacity: 0;
-  transform: translateY(10px);
-  animation: toastIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes toastIn {
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.toast.fade-out {
-  opacity: 0;
-  transform: translateY(-10px);
-  transition: all 0.3s ease;
-}
-
-/* =========================================================
-   Full Screen Presentation Mode
-   ========================================================= */
-body.fullscreen-mode .top-header,
-body.fullscreen-mode .studio-toolbar {
-  display: none !important;
-}
-
-body.fullscreen-mode .canvas-viewport {
-  height: 100vh !important;
-  width: 100vw !important;
-}
-
-/* Native Region Capture 9:16 Crop Target Frame (Zero Overhead) */
-.recording-crop-frame {
-  position: absolute;
-  pointer-events: none;
-  background: transparent;
-  border: none;
-  visibility: visible;
-  z-index: 10;
-  box-sizing: border-box;
-}
-
-/* =========================================================
-   9:16 Interactive Crop Viewfinder Overlay
-   ========================================================= */
-.crop-overlay-container {
-  position: absolute;
-  inset: 0;
-  z-index: 100;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.25s;
-}
-
-.crop-overlay-container.active {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-/* 9:16 Crop Box Frame */
-.crop-box {
-  position: absolute;
-  /* Glowing animated dashed border */
-  border: 2px dashed rgba(229, 169, 60, 0.9);
-  border-radius: 14px;
-  /* 0 0 0 9999px scrim dims everything outside cleanly */
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 25px rgba(229, 169, 60, 0.25), inset 0 0 18px rgba(229, 169, 60, 0.08);
-  cursor: grab;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  animation: cropBoxPulse 2.8s infinite alternate ease-in-out;
-}
-
-@keyframes cropBoxPulse {
-  0% {
-    border-color: rgba(229, 169, 60, 0.85);
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(229, 169, 60, 0.2);
-  }
-  100% {
-    border-color: rgba(255, 214, 128, 1);
-    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 32px rgba(229, 169, 60, 0.45);
-  }
-}
-
-.crop-box.dragging {
-  cursor: grabbing;
-  border-style: solid;
-  border-color: #ffd680;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72), 0 0 35px rgba(229, 169, 60, 0.5);
-}
-
-.crop-box.resizing {
-  border-style: solid;
-  border-color: #f87171;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72), 0 0 35px rgba(239, 68, 68, 0.4);
-}
-
-/* 3x3 Rule-of-Thirds Grid */
-.crop-grid {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: 12px;
-  overflow: hidden;
-  opacity: 0.35;
-  transition: opacity 0.2s;
-}
-
-.crop-box:hover .crop-grid,
-.crop-box.dragging .crop-grid,
-.crop-box.resizing .crop-grid {
-  opacity: 0.75;
-}
-
-.grid-line {
-  position: absolute;
-  pointer-events: none;
-}
-
-.grid-line-h {
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.4);
-}
-.grid-line-h.h-1 { top: 33.333%; }
-.grid-line-h.h-2 { top: 66.666%; }
-
-.grid-line-v {
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.4);
-}
-.grid-line-v.v-1 { left: 33.333%; }
-.grid-line-v.v-2 { left: 66.666%; }
-
-/* Corner Resize Handles */
-.crop-handle {
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  background: #ffffff;
-  border: 2.5px solid var(--accent-gold);
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  z-index: 10;
-  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-  touch-action: none;
-}
-
-.crop-handle:hover, .crop-box.resizing .crop-handle {
-  transform: scale(1.25);
-  background: var(--accent-gold);
-  border-color: #ffffff;
-}
-
-.handle-tl {
-  top: -9px;
-  left: -9px;
-  cursor: nwse-resize;
-}
-
-.handle-tr {
-  top: -9px;
-  right: -9px;
-  cursor: nesw-resize;
-}
-
-.handle-bl {
-  bottom: -9px;
-  left: -9px;
-  cursor: nesw-resize;
-}
-
-.handle-br {
-  bottom: -9px;
-  right: -9px;
-  cursor: nwse-resize;
-}
-
-/* Center Move Drag Hint */
-.crop-move-hint {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(15, 17, 23, 0.78);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  padding: 6px 14px;
-  border-radius: 20px;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  pointer-events: none;
-  opacity: 0.85;
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-.crop-box.dragging .crop-move-hint {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1.05);
-  border-color: var(--accent-gold);
-  color: #ffffff;
-}
-
-.crop-box.resizing .crop-move-hint {
-  opacity: 0;
-}
-
-/* Floating Action Pill Toolbar */
-.crop-action-bar {
-  position: absolute;
-  bottom: -56px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(18, 20, 29, 0.94);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
-  padding: 6px 10px;
-  border-radius: 30px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 20;
-  white-space: nowrap;
-  pointer-events: auto;
-  user-select: none;
-  transition: bottom 0.2s ease, top 0.2s ease;
-}
-
-/* Flip action bar to top if box is near bottom */
-.crop-action-bar.flip-top {
-  bottom: auto;
-  top: -56px;
-}
-
-.crop-ratio-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 5px 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.crop-ratio-badge .ratio-text {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-gold);
-}
-
-.crop-ratio-badge .res-text {
-  font-size: 11px;
-  font-weight: 500;
-  color: #ffffff;
-  font-variant-numeric: tabular-nums;
-}
-
-.crop-action-btn {
-  border: none;
-  background: none;
-  color: #ffffff;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 20px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.crop-action-btn.snap-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.crop-action-btn.snap-btn:hover {
-  background: rgba(229, 169, 60, 0.16);
-  border-color: var(--accent-gold);
-  color: var(--accent-gold);
-  transform: translateY(-1px);
-}
-
-.crop-action-btn.record-confirm-btn {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  color: #ffffff;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.crop-action-btn.record-confirm-btn:hover {
-  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.6);
-  transform: translateY(-1px);
-}
-
-.crop-action-btn.record-confirm-btn .record-red-dot {
-  width: 8px;
-  height: 8px;
-  background-color: #ffffff;
-  border-radius: 50%;
-  animation: pulseRecording 1.4s infinite;
-}
-
-.crop-action-btn.cancel-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-muted);
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  justify-content: center;
-  border-radius: 50%;
-}
-
-.crop-action-btn.cancel-btn:hover {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(239, 68, 68, 0.5);
-  color: #f87171;
-  transform: translateY(-1px);
-}
-
