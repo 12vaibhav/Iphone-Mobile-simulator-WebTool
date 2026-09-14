@@ -1063,113 +1063,80 @@
       const videoTrack = rawDisplayStream.getVideoTracks()[0];
       croppedStream = null;
 
-      // NATIVE GPU CROP (Zero-Stutter Region Capture API)
-      if (typeof CropTarget !== 'undefined' && videoTrack.cropTo) {
-        try {
-          const cropTarget = await CropTarget.fromElement(recordingCropFrame);
-          await videoTrack.cropTo(cropTarget);
-          croppedStream = rawDisplayStream;
-          console.log('Region Capture API (cropTo) successfully initialized.');
-          
-          // CRITICAL FIX: Wait for the browser to actually apply the crop to the stream.
-          // If we start MediaRecorder immediately, it records the first frame at 1920x1080.
-          // When the crop kicks in, the resolution changes mid-stream, causing players to zoom/stretch.
-          const tempVideo = document.createElement('video');
-          tempVideo.muted = true;
-          tempVideo.srcObject = croppedStream;
-          await tempVideo.play().catch(() => {});
-          await new Promise(resolve => {
-            // Wait for resolution change or fallback timeout
-            let isResolved = false;
-            const finish = () => {
-              if (isResolved) return;
-              isResolved = true;
-              tempVideo.removeEventListener('resize', finish);
-              tempVideo.pause();
-              tempVideo.srcObject = null;
-              resolve();
-            };
-            tempVideo.addEventListener('resize', finish);
-            setTimeout(finish, 800); // Max wait time
-          });
-          
-        } catch (e) {
-          console.warn('cropTo failed, falling back to canvas', e);
-        }
-      } 
+      // --- FORCE CONSTANT RESOLUTION CANVAS RECORDING ---
+      // We do NOT use videoTrack.cropTo() because it causes a resolution change mid-stream
+      // (from full screen to cropped size). While media players handle Variable Resolution WebMs,
+      // Video Editors (Premiere, Resolve) lock to the first frame's resolution, causing massive
+      // zoom-in and cut-off issues if the resolution drops.
+      // Recording a fixed-size Canvas guarantees a constant resolution video file.
       
-      // HIGH-PERFORMANCE FALLBACK (requestVideoFrameCallback)
-      if (!croppedStream) {
-        console.log('Using requestVideoFrameCallback fallback for cropping.');
-        if (!helperVideo) {
-          helperVideo = document.createElement('video');
-          helperVideo.muted = true;
-          helperVideo.playsInline = true;
-          helperVideo.setAttribute('playsinline', '');
-          helperVideo.style.cssText = 'position:fixed;bottom:10px;right:10px;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-9999;';
-        }
-        if (!helperVideo.isConnected) {
-          document.body.appendChild(helperVideo);
-        }
-        helperVideo.srcObject = rawDisplayStream;
-        await helperVideo.play().catch(e => console.warn('Helper video play:', e));
-        
-        await new Promise(resolve => {
-          if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) return resolve();
-          const onReady = () => {
-             if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) {
-               helperVideo.removeEventListener('loadeddata', onReady);
-               resolve();
-             }
-          };
-          helperVideo.addEventListener('loadeddata', onReady);
-        });
-
-        if (!cropCanvas) {
-          cropCanvas = document.createElement('canvas');
-          cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
-        }
-        
-        // CRITICAL FIX: Pre-size the canvas to target dimensions BEFORE calling captureStream.
-        // Otherwise, it initializes at 300x150 and resizes on the first frame, causing a zoom glitch.
-        const initialDevRect = recordingCropFrame.getBoundingClientRect();
-        cropCanvas.width = Math.round(initialDevRect.width);
-        cropCanvas.height = Math.round(initialDevRect.height);
-        
-        cropCtx.imageSmoothingEnabled = true;
-        cropCtx.imageSmoothingQuality = 'medium';
-
-        function drawFallbackFrame(now, metadata) {
-           if (!isRecording) return;
-           if (helperVideo.videoWidth > 0) {
-              const devRect = recordingCropFrame.getBoundingClientRect();
-              const scaleX = helperVideo.videoWidth / window.innerWidth;
-              const scaleY = helperVideo.videoHeight / window.innerHeight;
-              
-              if (cropCanvas.width !== Math.round(devRect.width) || cropCanvas.height !== Math.round(devRect.height)) {
-                cropCanvas.width = Math.round(devRect.width);
-                cropCanvas.height = Math.round(devRect.height);
-                cropCtx.fillStyle = '#12151d';
-                cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-              }
-
-              cropCtx.drawImage(
-                 helperVideo,
-                 Math.max(0, Math.round(devRect.left * scaleX)), 
-                 Math.max(0, Math.round(devRect.top * scaleY)),
-                 Math.round(devRect.width * scaleX), 
-                 Math.round(devRect.height * scaleY),
-                 0, 0,
-                 cropCanvas.width, cropCanvas.height
-              );
-           }
-           helperVideo.requestVideoFrameCallback(drawFallbackFrame);
-        }
-        
-        helperVideo.requestVideoFrameCallback(drawFallbackFrame);
-        croppedStream = cropCanvas.captureStream(30);
-        rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
+      console.log('Using requestVideoFrameCallback canvas for constant resolution recording.');
+      if (!helperVideo) {
+        helperVideo = document.createElement('video');
+        helperVideo.muted = true;
+        helperVideo.playsInline = true;
+        helperVideo.setAttribute('playsinline', '');
+        helperVideo.style.cssText = 'position:fixed;bottom:10px;right:10px;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-9999;';
       }
+      if (!helperVideo.isConnected) {
+        document.body.appendChild(helperVideo);
+      }
+      helperVideo.srcObject = rawDisplayStream;
+      await helperVideo.play().catch(e => console.warn('Helper video play:', e));
+      
+      await new Promise(resolve => {
+        if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) return resolve();
+        const onReady = () => {
+           if (helperVideo.readyState >= 2 && helperVideo.videoWidth > 0) {
+             helperVideo.removeEventListener('loadeddata', onReady);
+             resolve();
+           }
+        };
+        helperVideo.addEventListener('loadeddata', onReady);
+      });
+
+      if (!cropCanvas) {
+        cropCanvas = document.createElement('canvas');
+        cropCtx = cropCanvas.getContext('2d', { alpha: false, desynchronized: true });
+      }
+      
+      // CRITICAL FIX: Lock the canvas to fixed dimensions for the ENTIRE recording.
+      const initialDevRect = recordingCropFrame.getBoundingClientRect();
+      const fixedWidth = Math.round(initialDevRect.width);
+      const fixedHeight = Math.round(initialDevRect.height);
+      
+      cropCanvas.width = fixedWidth;
+      cropCanvas.height = fixedHeight;
+      
+      cropCtx.imageSmoothingEnabled = true;
+      cropCtx.imageSmoothingQuality = 'high';
+
+      function drawFallbackFrame(now, metadata) {
+         if (!isRecording) return;
+         if (helperVideo.videoWidth > 0) {
+            const devRect = recordingCropFrame.getBoundingClientRect();
+            const scaleX = helperVideo.videoWidth / window.innerWidth;
+            const scaleY = helperVideo.videoHeight / window.innerHeight;
+            
+            cropCtx.fillStyle = '#12151d';
+            cropCtx.fillRect(0, 0, fixedWidth, fixedHeight);
+
+            cropCtx.drawImage(
+               helperVideo,
+               Math.max(0, Math.round(devRect.left * scaleX)), 
+               Math.max(0, Math.round(devRect.top * scaleY)),
+               Math.round(devRect.width * scaleX), 
+               Math.round(devRect.height * scaleY),
+               0, 0,
+               fixedWidth, fixedHeight
+            );
+         }
+         helperVideo.requestVideoFrameCallback(drawFallbackFrame);
+      }
+      
+      helperVideo.requestVideoFrameCallback(drawFallbackFrame);
+      croppedStream = cropCanvas.captureStream(60); // 60 FPS constant stream
+      rawDisplayStream.getAudioTracks().forEach(track => croppedStream.addTrack(track));
 
       // Set recording flag
       isRecording = true;
