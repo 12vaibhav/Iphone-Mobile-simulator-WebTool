@@ -133,11 +133,21 @@
         <select id="scaleSelect" title="Zoom / Scale View">
           <option value="auto">Scale: Auto-Fit</option>
           <option value="1">100% Original</option>
+          <option value="0.95">95%</option>
+          <option value="0.85">85%</option>
           <option value="0.75">75%</option>
           <option value="0.6">60%</option>
           <option value="0.5">50%</option>
         </select>
       </div>
+
+      <!-- Rotate 90° Anticlockwise (Landscape Mode) -->
+      <button id="rotateBtn" class="tool-btn" title="Rotate Device 90° Anticlockwise (Landscape Mode)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38l-5.67-5.67"/>
+        </svg>
+        <span id="rotateBtnText">Rotate: 0°</span>
+      </button>
 
       <!-- 10-Degree Tilt Button -->
       <button id="tiltBtn" class="tool-btn" title="Tilt Device (Click: Left -10°, Another click: Right +10°, Click: Reset 0°)">
@@ -239,6 +249,10 @@
 
     <!-- 9:16 Interactive Crop Viewfinder Overlay -->
     <div class="crop-overlay-container" id="cropOverlayContainer">
+      <!-- Smart Center Snapping Guidelines -->
+      <div class="crop-center-guide guide-v" id="cropGuideV"></div>
+      <div class="crop-center-guide guide-h" id="cropGuideH"></div>
+
       <div class="crop-box" id="cropBox">
         <!-- 3x3 Rule-of-Thirds Grid -->
         <div class="crop-grid" id="cropGrid">
@@ -267,28 +281,37 @@
           <span>Drag to Frame</span>
         </div>
 
-        <!-- Floating Action Pill Toolbar -->
+        <!-- Floating Action Toolbar (Right of Crop Box) -->
         <div class="crop-action-bar" id="cropActionBar">
           <div class="crop-ratio-badge">
-            <span class="ratio-text">9:16 Reel</span>
-            <span class="res-text" id="cropResBadge">VP9 WebM</span>
+            <span class="ratio-text" id="cropRatioBadgeText">9:16 Reel</span>
+            <span class="res-text" id="cropResBadge">H.264 WebM</span>
           </div>
-          <button type="button" class="crop-action-btn snap-btn" id="cropSnapBtn" title="Center and wrap 9:16 box around iPhone">
+          <button type="button" class="crop-action-btn record-confirm-btn" id="cropConfirmBtn" title="Start Recording">
+            <span class="record-red-dot"></span>
+            <span>Start Recording</span>
+          </button>
+          <button type="button" class="crop-action-btn ratio-toggle-btn" id="cropRatioToggleBtn" title="Switch Aspect Ratio (9:16 / 16:9)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+              <line x1="12" y1="2" x2="12" y2="6"></line>
+              <line x1="12" y1="18" x2="12" y2="22"></line>
+            </svg>
+            <span id="cropRatioToggleLabel">Switch to 16:9</span>
+          </button>
+          <button type="button" class="crop-action-btn snap-btn" id="cropSnapBtn" title="Center and wrap box around device">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
               <line x1="12" y1="18" x2="12.01" y2="18"></line>
             </svg>
             <span>Snap to Phone</span>
           </button>
-          <button type="button" class="crop-action-btn record-confirm-btn" id="cropConfirmBtn" title="Start Recording">
-            <span class="record-red-dot"></span>
-            <span>Start Recording</span>
-          </button>
           <button type="button" class="crop-action-btn cancel-btn" id="cropCancelBtn" title="Cancel Crop">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
+            <span>Cancel</span>
           </button>
         </div>
       </div>

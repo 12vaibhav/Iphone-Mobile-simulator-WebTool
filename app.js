@@ -39,6 +39,8 @@
 
   // Viewport Scale, Tilt & Full Screen
   const scaleSelect = document.getElementById('scaleSelect');
+  const rotateBtn = document.getElementById('rotateBtn');
+  const rotateBtnText = document.getElementById('rotateBtnText');
   const tiltBtn = document.getElementById('tiltBtn');
   const tiltBtnText = document.getElementById('tiltBtnText');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
@@ -54,11 +56,16 @@
   const recordingBadge = document.getElementById('recordingBadge');
   const recordingTimer = document.getElementById('recordingTimer');
 
-  // 9:16 Interactive Crop Viewfinder Elements
+  // Interactive Crop Viewfinder Elements (9:16 & 16:9)
   const recordingCropFrame = document.getElementById('recordingCropFrame');
   const cropOverlayContainer = document.getElementById('cropOverlayContainer');
   const cropBox = document.getElementById('cropBox');
+  const cropGuideV = document.getElementById('cropGuideV');
+  const cropGuideH = document.getElementById('cropGuideH');
   const cropSnapBtn = document.getElementById('cropSnapBtn');
+  const cropRatioToggleBtn = document.getElementById('cropRatioToggleBtn');
+  const cropRatioToggleLabel = document.getElementById('cropRatioToggleLabel');
+  const cropRatioBadgeText = document.getElementById('cropRatioBadgeText');
   const cropConfirmBtn = document.getElementById('cropConfirmBtn');
   const cropCancelBtn = document.getElementById('cropCancelBtn');
   const cropActionBar = document.getElementById('cropActionBar');
@@ -80,8 +87,9 @@
   let isTouchIndicatorEnabled = true;
   let isBgBlurred = false;
   let customBgDataUrl = null;
+  let isRotated90 = false; // 90-degree anticlockwise landscape mode
 
-  // Recorder State (VP9 WebM)
+  // Recorder State (VP9 / H.264 WebM)
   let isRecording = false;
   let mediaRecorder = null;
   let recordedChunks = [];
@@ -96,8 +104,11 @@
   let cropCtx = null;
   let activeCropRect = null;
 
-  // 9:16 Crop Selection State
-  const CROP_ASPECT_RATIO = 9 / 16;
+  // Crop Selection State (Supports 9:16 & 16:9)
+  let currentCropRatioMode = '9:16'; // '9:16' or '16:9'
+  function getCropAspectRatio() {
+    return currentCropRatioMode === '16:9' ? (16 / 9) : (9 / 16);
+  }
   let cropAnchor = { isSnapped: true, relX: 0, relY: 0, width: 0, height: 0 };
 
 
@@ -484,17 +495,24 @@
       const availWidth = canvasViewport.clientWidth - 48;
       const availHeight = canvasViewport.clientHeight - 36;
 
-      const targetWidth = BASE_WIDTH;
-      const targetHeight = BASE_HEIGHT;
+      // In landscape (90-degree rotated), the device width and height bounds are swapped
+      const targetWidth = isRotated90 ? BASE_HEIGHT : BASE_WIDTH;
+      const targetHeight = isRotated90 ? BASE_WIDTH : BASE_HEIGHT;
 
       const scaleX = availWidth / targetWidth;
       const scaleY = availHeight / targetHeight;
-      const autoScale = Math.min(scaleX, scaleY, 0.98); // Max 98% scale
+      // Allow scaling up to 1.18x in landscape to take full advantage of wide laptop screens
+      const maxScale = isRotated90 ? 1.18 : 0.98;
+      const autoScale = Math.min(scaleX, scaleY, maxScale);
 
       deviceRigContainer.style.transform = `translate(-50%, -50%) scale(${Math.max(autoScale, 0.35).toFixed(3)})`;
     } else {
       const fixedScale = parseFloat(scaleMode);
       deviceRigContainer.style.transform = `translate(-50%, -50%) scale(${fixedScale})`;
+    }
+
+    if (isRecording || (cropOverlayContainer && cropOverlayContainer.classList.contains('active'))) {
+      setTimeout(realignCropBox, 50);
     }
   }
 
@@ -552,6 +570,39 @@
     } else {
       enterFullScreen();
     }
+  }
+
+  // ==========================================
+  // 90-Degree Anticlockwise Rotation (Landscape Mode)
+  // ==========================================
+  if (rotateBtn) {
+    rotateBtn.addEventListener('click', () => {
+      isRotated90 = !isRotated90;
+      if (isRotated90) {
+        deviceWrapper.classList.add('rotated-90');
+        rotateBtn.classList.add('active');
+        if (rotateBtnText) rotateBtnText.innerText = 'Rotate: -90°';
+        showToast('🔄 Rotated 90° Anticlockwise (Landscape Mode)');
+        // In landscape, automatically adapt crop box to 16:9 if active
+        if (cropOverlayContainer && cropOverlayContainer.classList.contains('active')) {
+          setCropRatioMode('16:9');
+          setTimeout(snapCropToDevice, 360);
+        }
+      } else {
+        deviceWrapper.classList.remove('rotated-90');
+        rotateBtn.classList.remove('active');
+        if (rotateBtnText) rotateBtnText.innerText = 'Rotate: 0°';
+        showToast('🔄 Rotated to Portrait (0°)');
+        // In portrait, automatically adapt crop box to 9:16 if active
+        if (cropOverlayContainer && cropOverlayContainer.classList.contains('active')) {
+          setCropRatioMode('9:16');
+          setTimeout(snapCropToDevice, 360);
+        }
+      }
+
+      // Re-apply scale calculation with smooth expansion
+      calculateAndApplyScale();
+    });
   }
 
   // ==========================================
@@ -631,18 +682,148 @@
   // ==========================================
   // 9:16 Interactive Crop Viewfinder Logic
   // ==========================================
+  function updateCenterSnapGuides(boxLeft, boxTop, boxW, boxH) {
+    if (!cropOverlayContainer || !canvasViewport) return { left: boxLeft, top: boxTop, snappedX: false, snappedY: false };
+
+    const vpRect = canvasViewport.getBoundingClientRect();
+    let targetCenterX = vpRect.width / 2;
+    let targetCenterY = vpRect.height / 2;
+
+    if (deviceWrapper) {
+      const devRect = deviceWrapper.getBoundingClientRect();
+      targetCenterX = (devRect.left + devRect.width / 2) - vpRect.left;
+      targetCenterY = (devRect.top + devRect.height / 2) - vpRect.top;
+    }
+
+    const boxCenterX = boxLeft + boxW / 2;
+    const boxCenterY = boxTop + boxH / 2;
+
+    const SNAP_DIST = 14; // Magnetic snap radius (px)
+    let snappedLeft = boxLeft;
+    let snappedTop = boxTop;
+    let isSnappedX = false;
+    let isSnappedY = false;
+
+    // Horizontal Auto-Centering (Vertical Center Guideline)
+    if (Math.abs(boxCenterX - targetCenterX) <= SNAP_DIST) {
+      snappedLeft = targetCenterX - boxW / 2;
+      isSnappedX = true;
+      if (cropGuideV) {
+        cropGuideV.style.left = `${Math.round(targetCenterX)}px`;
+        cropGuideV.classList.add('visible');
+      }
+    } else if (cropGuideV) {
+      cropGuideV.classList.remove('visible');
+    }
+
+    // Vertical Auto-Centering (Horizontal Center Guideline)
+    if (Math.abs(boxCenterY - targetCenterY) <= SNAP_DIST) {
+      snappedTop = targetCenterY - boxH / 2;
+      isSnappedY = true;
+      if (cropGuideH) {
+        cropGuideH.style.top = `${Math.round(targetCenterY)}px`;
+        cropGuideH.classList.add('visible');
+      }
+    } else if (cropGuideH) {
+      cropGuideH.classList.remove('visible');
+    }
+
+    if (isSnappedX || isSnappedY) {
+      cropBox.classList.add('snapped-center');
+    } else {
+      cropBox.classList.remove('snapped-center');
+    }
+
+    return {
+      left: snappedLeft,
+      top: snappedTop,
+      snappedX: isSnappedX,
+      snappedY: isSnappedY
+    };
+  }
+
+  function hideCenterGuides() {
+    if (cropGuideV) cropGuideV.classList.remove('visible');
+    if (cropGuideH) cropGuideH.classList.remove('visible');
+    if (cropBox) cropBox.classList.remove('snapped-center');
+  }
+
+  function setCropRatioMode(mode) {
+    currentCropRatioMode = mode;
+    if (cropRatioBadgeText) {
+      cropRatioBadgeText.innerText = (mode === '16:9') ? '16:9 Video' : '9:16 Reel';
+    }
+    if (cropRatioToggleLabel) {
+      cropRatioToggleLabel.innerText = (mode === '16:9') ? 'Switch to 9:16' : 'Switch to 16:9';
+    }
+    if (videoFormatBadge) {
+      videoFormatBadge.innerText = `${mode} H.264 WebM`;
+    }
+
+    if (cropBox && cropBox.style.width && parseFloat(cropBox.style.width) > 0 && canvasViewport) {
+      const vpWidth = canvasViewport.clientWidth;
+      const vpHeight = canvasViewport.clientHeight;
+      const currentW = parseFloat(cropBox.style.width) || 300;
+      const currentH = parseFloat(cropBox.style.height) || 533;
+      const centerX = (parseFloat(cropBox.style.left) || 0) + currentW / 2;
+      const centerY = (parseFloat(cropBox.style.top) || 0) + currentH / 2;
+      const ratio = getCropAspectRatio();
+
+      let newW, newH;
+      if (mode === '16:9') {
+        newH = Math.min(currentH, vpHeight - 40);
+        newW = newH * ratio;
+        if (newW > vpWidth - 40) {
+          newW = vpWidth - 40;
+          newH = newW / ratio;
+        }
+      } else {
+        newW = Math.min(currentW, vpWidth - 40);
+        newH = newW / ratio;
+        if (newH > vpHeight - 40) {
+          newH = vpHeight - 40;
+          newW = newH * ratio;
+        }
+      }
+
+      let newLeft = Math.max(8, Math.min(vpWidth - newW - 8, centerX - newW / 2));
+      let newTop = Math.max(8, Math.min(vpHeight - newH - 8, centerY - newH / 2));
+
+      cropBox.style.width = `${Math.round(newW)}px`;
+      cropBox.style.height = `${Math.round(newH)}px`;
+      cropBox.style.left = `${Math.round(newLeft)}px`;
+      cropBox.style.top = `${Math.round(newTop)}px`;
+
+      syncRecordingCropFrame();
+      checkActionBarFlip();
+    }
+  }
+
   function snapCropToDevice() {
     if (!cropBox || !deviceWrapper || !canvasViewport) return;
     const vpRect = canvasViewport.getBoundingClientRect();
     const devRect = deviceWrapper.getBoundingClientRect();
+    const ratio = getCropAspectRatio();
 
     const pad = 36;
-    let targetH = devRect.height + pad * 2;
-    let targetW = targetH * CROP_ASPECT_RATIO;
+    let targetW, targetH;
 
-    if (targetW < devRect.width + pad * 2) {
+    if (ratio >= 1) {
+      // 16:9 Landscape Aspect Ratio
       targetW = devRect.width + pad * 2;
-      targetH = targetW / CROP_ASPECT_RATIO;
+      targetH = targetW / ratio;
+      if (targetH < devRect.height + pad * 2) {
+        targetH = devRect.height + pad * 2;
+        targetW = targetH * ratio;
+      }
+    } else {
+      // 9:16 Portrait Aspect Ratio
+      targetH = devRect.height + pad * 2;
+      targetW = targetH * ratio;
+      if (targetW < devRect.width + pad * 2) {
+        targetW = devRect.width + pad * 2;
+        targetH = targetW / ratio;
+      }
     }
 
     const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
@@ -662,6 +843,30 @@
     cropAnchor = { isSnapped: true, relX: 0, relY: 0, width: Math.round(targetW), height: Math.round(targetH) };
     syncRecordingCropFrame();
     checkActionBarFlip();
+    hideCenterGuides();
+  }
+
+  function realignCropBox() {
+    if (!cropBox || !deviceWrapper || !canvasViewport) return;
+    if (cropAnchor.isSnapped) {
+      snapCropToDevice();
+    } else if (cropAnchor.width > 0) {
+      const vpRect = canvasViewport.getBoundingClientRect();
+      const devRect = deviceWrapper.getBoundingClientRect();
+      const devCenterRelX = (devRect.left + devRect.width / 2) - vpRect.left;
+      const devCenterRelY = (devRect.top + devRect.height / 2) - vpRect.top;
+
+      let newLeft = devCenterRelX + cropAnchor.relX - cropAnchor.width / 2;
+      let newTop = devCenterRelY + cropAnchor.relY - cropAnchor.height / 2;
+
+      newLeft = Math.max(8, Math.min(vpRect.width - cropAnchor.width - 8, newLeft));
+      newTop = Math.max(8, Math.min(vpRect.height - cropAnchor.height - 8, newTop));
+
+      cropBox.style.left = `${Math.round(newLeft)}px`;
+      cropBox.style.top = `${Math.round(newTop)}px`;
+      syncRecordingCropFrame();
+      checkActionBarFlip();
+    }
   }
 
   function syncRecordingCropFrame() {
@@ -678,26 +883,36 @@
 
   function checkActionBarFlip() {
     if (!cropActionBar || !cropBox || !canvasViewport) return;
-    const top = parseFloat(cropBox.style.top) || 0;
-    const height = parseFloat(cropBox.style.height) || 0;
-    const vpHeight = canvasViewport.clientHeight;
-    if (top + height + 68 > vpHeight) {
-      cropActionBar.classList.add('flip-top');
+    const left = parseFloat(cropBox.style.left) || 0;
+    const width = parseFloat(cropBox.style.width) || 0;
+    const vpWidth = canvasViewport.clientWidth;
+    const barWidth = cropActionBar.offsetWidth || 160;
+    if (left + width + barWidth + 20 > vpWidth) {
+      cropActionBar.classList.add('flip-left');
     } else {
-      cropActionBar.classList.remove('flip-top');
+      cropActionBar.classList.remove('flip-left');
     }
   }
 
   function openCropViewfinder() {
     if (!cropOverlayContainer || !cropBox) return;
     cropOverlayContainer.classList.add('active');
+
+    // Automatically align default crop aspect ratio with device orientation
+    if (isRotated90 && currentCropRatioMode !== '16:9') {
+      setCropRatioMode('16:9');
+    } else if (!isRotated90 && currentCropRatioMode !== '9:16') {
+      setCropRatioMode('9:16');
+    }
+
     snapCropToDevice();
-    showToast('📐 Frame your 9:16 area & click "Start Recording"', 3000);
+    showToast(`📐 Frame your ${currentCropRatioMode} area & click "Start Recording"`, 3000);
   }
 
   function closeCropViewfinder() {
     if (!cropOverlayContainer) return;
     cropOverlayContainer.classList.remove('active');
+    hideCenterGuides();
   }
 
   // --- Dragging the Crop Box ---
@@ -724,8 +939,13 @@
       const vpHeight = canvasViewport.clientHeight;
       const boxW = cropBox.offsetWidth;
       const boxH = cropBox.offsetHeight;
-      let newLeft = Math.max(0, Math.min(vpWidth - boxW, initialBoxLeft + dx));
-      let newTop = Math.max(0, Math.min(vpHeight - boxH, initialBoxTop + dy));
+      let rawLeft = initialBoxLeft + dx;
+      let rawTop = initialBoxTop + dy;
+
+      const snap = updateCenterSnapGuides(rawLeft, rawTop, boxW, boxH);
+      let newLeft = Math.max(0, Math.min(vpWidth - boxW, snap.left));
+      let newTop = Math.max(0, Math.min(vpHeight - boxH, snap.top));
+
       cropBox.style.left = `${Math.round(newLeft)}px`;
       cropBox.style.top = `${Math.round(newTop)}px`;
       syncRecordingCropFrame();
@@ -736,6 +956,7 @@
       if (!isDraggingCrop) return;
       isDraggingCrop = false;
       cropBox.classList.remove('dragging');
+      hideCenterGuides();
       try { cropBox.releasePointerCapture(e.pointerId); } catch (err) {}
       if (deviceWrapper && canvasViewport) {
         const vpRect = canvasViewport.getBoundingClientRect();
@@ -751,7 +972,7 @@
     cropBox.addEventListener('pointercancel', endDrag);
   }
 
-  // --- Resizing the Crop Box (Strict 9:16 Aspect Ratio) ---
+  // --- Resizing the Crop Box (Dynamic 9:16 or 16:9 Aspect Ratio) ---
   let activeResizeHandle = null;
   let resizeStartX = 0, resizeStartY = 0;
   let initialResizeLeft = 0, initialResizeTop = 0, initialResizeW = 0, initialResizeH = 0;
@@ -773,6 +994,7 @@
 
     handle.addEventListener('pointermove', (e) => {
       if (!activeResizeHandle || !canvasViewport) return;
+      const activeRatio = getCropAspectRatio();
       const dx = e.clientX - resizeStartX;
       const dy = e.clientY - resizeStartY;
       const vpWidth = canvasViewport.clientWidth;
@@ -782,33 +1004,33 @@
       const MIN_W = 180;
 
       if (activeResizeHandle === 'br') {
-        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (dy * CROP_ASPECT_RATIO);
+        const delta = Math.abs(dx) > Math.abs(dy * activeRatio) ? dx : (dy * activeRatio);
         newW = Math.max(MIN_W, initialResizeW + delta);
-        newH = newW / CROP_ASPECT_RATIO;
-        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / CROP_ASPECT_RATIO; }
-        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * CROP_ASPECT_RATIO; }
+        newH = newW / activeRatio;
+        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / activeRatio; }
+        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * activeRatio; }
       } else if (activeResizeHandle === 'tr') {
-        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? dx : (-dy * CROP_ASPECT_RATIO);
+        const delta = Math.abs(dx) > Math.abs(dy * activeRatio) ? dx : (-dy * activeRatio);
         newW = Math.max(MIN_W, initialResizeW + delta);
-        newH = newW / CROP_ASPECT_RATIO;
+        newH = newW / activeRatio;
         newTop = initialResizeTop - (newH - initialResizeH);
-        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * CROP_ASPECT_RATIO; }
-        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / CROP_ASPECT_RATIO; newTop = initialResizeTop - (newH - initialResizeH); }
+        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * activeRatio; }
+        if (newLeft + newW > vpWidth) { newW = vpWidth - newLeft; newH = newW / activeRatio; newTop = initialResizeTop - (newH - initialResizeH); }
       } else if (activeResizeHandle === 'bl') {
-        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (dy * CROP_ASPECT_RATIO);
+        const delta = Math.abs(dx) > Math.abs(dy * activeRatio) ? -dx : (dy * activeRatio);
         newW = Math.max(MIN_W, initialResizeW + delta);
-        newH = newW / CROP_ASPECT_RATIO;
+        newH = newW / activeRatio;
         newLeft = initialResizeLeft - (newW - initialResizeW);
-        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / CROP_ASPECT_RATIO; }
-        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * CROP_ASPECT_RATIO; newLeft = initialResizeLeft - (newW - initialResizeW); }
+        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / activeRatio; }
+        if (newTop + newH > vpHeight) { newH = vpHeight - newTop; newW = newH * activeRatio; newLeft = initialResizeLeft - (newW - initialResizeW); }
       } else if (activeResizeHandle === 'tl') {
-        const delta = Math.abs(dx) > Math.abs(dy * CROP_ASPECT_RATIO) ? -dx : (-dy * CROP_ASPECT_RATIO);
+        const delta = Math.abs(dx) > Math.abs(dy * activeRatio) ? -dx : (-dy * activeRatio);
         newW = Math.max(MIN_W, initialResizeW + delta);
-        newH = newW / CROP_ASPECT_RATIO;
+        newH = newW / activeRatio;
         newLeft = initialResizeLeft - (newW - initialResizeW);
         newTop = initialResizeTop - (newH - initialResizeH);
-        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / CROP_ASPECT_RATIO; newTop = initialResizeTop - (newH - initialResizeH); }
-        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * CROP_ASPECT_RATIO; newLeft = initialResizeLeft - (newW - initialResizeW); }
+        if (newLeft < 0) { newLeft = 0; newW = initialResizeLeft + initialResizeW; newH = newW / activeRatio; newTop = initialResizeTop - (newH - initialResizeH); }
+        if (newTop < 0) { newTop = 0; newH = initialResizeTop + initialResizeH; newW = newH * activeRatio; newLeft = initialResizeLeft - (newW - initialResizeW); }
       }
 
       cropBox.style.width = `${Math.round(newW)}px`;
@@ -823,6 +1045,7 @@
       if (!activeResizeHandle) return;
       activeResizeHandle = null;
       cropBox.classList.remove('resizing');
+      hideCenterGuides();
       try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
       if (deviceWrapper && canvasViewport) {
         const vpRect = canvasViewport.getBoundingClientRect();
@@ -839,11 +1062,20 @@
   });
 
   // Crop Action Bar Buttons
+  if (cropRatioToggleBtn) {
+    cropRatioToggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const newMode = (currentCropRatioMode === '9:16') ? '16:9' : '9:16';
+      setCropRatioMode(newMode);
+      showToast(`📐 Switched aspect ratio to ${newMode}`);
+    });
+  }
+
   if (cropSnapBtn) {
     cropSnapBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       snapCropToDevice();
-      showToast('🎯 Snapped 9:16 frame to iPhone');
+      showToast(`🎯 Snapped ${currentCropRatioMode} frame to device`);
     });
   }
 
@@ -872,6 +1104,10 @@
   // ==========================================
   function getSupportedWebmMime() {
     const webmCandidates = [
+      'video/webm;codecs=h264,opus',
+      'video/webm;codecs=h264',
+      'video/webm;codecs=avc1,opus',
+      'video/webm;codecs=avc1',
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8,opus',
@@ -894,8 +1130,8 @@
         video: { 
           displaySurface: 'browser', 
           frameRate: { ideal: 30, max: 30 },
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 }
+          // Removed max width/height to allow the browser to capture 
+          // at native physical resolution (e.g. Retina displays) for super crisp quality.
         },
         audio: true,
         preferCurrentTab: true,
@@ -906,8 +1142,16 @@
 
       // Wait for browser sharing infobar animation to settle
       await new Promise(resolve => setTimeout(resolve, 350));
+      
+      // The browser UI bar changes the viewport layout. Realign the crop box to the new device position.
+      realignCropBox();
 
       const videoTrack = rawDisplayStream.getVideoTracks()[0];
+      
+      // Force the encoder to prioritize pixel-perfect sharpness and text clarity over motion smoothing
+      if ('contentHint' in videoTrack) {
+        videoTrack.contentHint = 'detail';
+      }
       
       // Enforce sharing a tab to ensure high-performance native CropTarget works
       const settings = videoTrack.getSettings();
@@ -1016,13 +1260,13 @@
       recordBtnText.innerText = 'Stop';
       startRecordingTimer();
 
-      // Configure MediaRecorder (VP9 WebM)
+      // Configure MediaRecorder (H.264 / VP9 WebM)
       const selectedMime = getSupportedWebmMime();
       recordedChunks = [];
 
       mediaRecorder = new MediaRecorder(croppedStream, {
         mimeType: selectedMime,
-        videoBitsPerSecond: 8_000_000
+        videoBitsPerSecond: 15_000_000 // Increased from 10 Mbps to 15 Mbps for super high quality
       });
 
       mediaRecorder.ondataavailable = (e) => {
@@ -1057,11 +1301,11 @@
           downloadRecordBtn.download = `mobile-recording-${timestamp}.webm`;
         }
         if (downloadBtnLabel) {
-          downloadBtnLabel.innerText = `Download VP9 WebM (${finalMb} MB)`;
+          downloadBtnLabel.innerText = `Download H.264 WebM (${finalMb} MB)`;
         }
 
         videoDurationInfo.innerText = `Duration: ${formatTimer(durationSec)}`;
-        if (videoFormatBadge) videoFormatBadge.innerText = '9:16 VP9 WebM';
+        if (videoFormatBadge) videoFormatBadge.innerText = `${currentCropRatioMode} H.264 WebM`;
 
         // Open Modal
         recordModalBackdrop.classList.add('active');
