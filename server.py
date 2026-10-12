@@ -395,7 +395,8 @@ class SimulatorServer(http.server.SimpleHTTPRequestHandler):
   ::-webkit-scrollbar {{ display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }}
   ::-webkit-scrollbar-track {{ background: transparent !important; }}
   ::-webkit-scrollbar-thumb {{ background: transparent !important; }}
-  html, body {{ -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; -webkit-overflow-scrolling: touch; }}
+  * {{ -ms-overflow-style: none !important; scrollbar-width: none !important; }}
+  html, body {{ -webkit-overflow-scrolling: touch; }}
 </style>
 <script id="simulator-font-proxy">
 /* Lightweight runtime font & asset proxy: intercepts dynamically-inserted

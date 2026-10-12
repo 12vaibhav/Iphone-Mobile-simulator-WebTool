@@ -405,7 +405,8 @@
             ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; background: transparent !important; }
             ::-webkit-scrollbar-track { background: transparent !important; }
             ::-webkit-scrollbar-thumb { background: transparent !important; }
-            html, body { -ms-overflow-style: none !important; scrollbar-width: none !important; overflow-x: hidden !important; max-width: 100% !important; -webkit-overflow-scrolling: touch; }
+            * { -ms-overflow-style: none !important; scrollbar-width: none !important; }
+            html, body { -webkit-overflow-scrolling: touch; }
           `;
           if (iframeDoc.head) iframeDoc.head.appendChild(style);
         }
@@ -459,7 +460,7 @@
 
       iframeDoc.addEventListener('mouseleave', handleScreenPointerLeave, { passive: true });
 
-      // Handle touch cursor press and ripple without moving or scrolling the screen
+      // Handle touch cursor press and ripple without interfering with page interaction
       iframeDoc.addEventListener('mousedown', (e) => {
         if (!isTouchIndicatorEnabled) return;
         circularTouchCursor.classList.add('active');
@@ -474,6 +475,34 @@
       iframeDoc.addEventListener('dragstart', (e) => {
         e.preventDefault();
       });
+
+      // Passive Scale-Compensated Wheel Assistant (Never blocks native scroll; boosts velocity to match 1:1 mouse physical speed)
+      iframeDoc.addEventListener('wheel', (e) => {
+        try {
+          const win = iframeDoc.defaultView || window;
+          if (!win) return;
+          const scale = getCurrentScale();
+          if (scale < 0.95) {
+            let dy = e.deltaY;
+            let dx = e.deltaX;
+            if (e.deltaMode === 1) { // Lines
+              dy *= 38;
+              dx *= 38;
+            } else if (e.deltaMode === 2) {
+              dy *= 800;
+              dx *= 400;
+            }
+            const boost = (1 / Math.max(scale, 0.25) - 1);
+            if (boost > 0.05) {
+              win.scrollBy({
+                top: dy * boost,
+                left: dx * boost,
+                behavior: 'auto'
+              });
+            }
+          }
+        } catch (err) {}
+      }, { passive: true });
 
     } catch (err) {
       console.log('Cross-origin frame note: direct browser events handled natively.');
@@ -528,17 +557,31 @@
   canvasViewport.addEventListener('scroll', preventContainerScroll, { passive: true });
   window.addEventListener('scroll', preventContainerScroll, { passive: true });
 
-  // Forward wheel scrolling from canvas or phone frame to the simulator iframe without layout thrashing
+  // Forward wheel scrolling from canvas or phone frame to the simulator iframe with scale compensation
   canvasViewport.addEventListener('wheel', (e) => {
     try {
       const iframeWin = simulatorIframe.contentWindow;
-      if (iframeWin) {
-        iframeWin.scrollBy({
-          top: e.deltaY,
-          left: e.deltaX,
-          behavior: 'auto'
-        });
+      if (!iframeWin) return;
+
+      let dy = e.deltaY;
+      let dx = e.deltaX;
+
+      if (e.deltaMode === 1) { // Windows line mode (3 lines = ~114px)
+        dy *= 38;
+        dx *= 38;
+      } else if (e.deltaMode === 2) {
+        dy *= 800;
+        dx *= 400;
       }
+
+      const scale = getCurrentScale();
+      const factor = 1 / Math.max(scale, 0.25);
+
+      iframeWin.scrollBy({
+        top: dy * factor,
+        left: dx * factor,
+        behavior: 'auto'
+      });
     } catch (err) {}
   }, { passive: true });
 
